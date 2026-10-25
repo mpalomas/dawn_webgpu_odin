@@ -3,7 +3,7 @@ package main
 
 import "core:os"
 import "vendor:glfw"
-import "../app"
+import "../shared"
 import wgpu "../../webgpu"
 
 SHADER :: `
@@ -44,13 +44,13 @@ Uniforms :: struct {
 }
 
 main :: proc() {
-	a: app.App
-	if !app.init(&a, "dawn_webgpu_odin: triangle", 800, 600) {
+	a: shared.App
+	if !shared.init(&a, "dawn_webgpu_odin: triangle", 800, 600) {
 		os.exit(1)
 	}
-	defer app.shutdown(&a)
+	defer shared.shutdown(&a)
 
-	module := app.shader_module(a.device, "triangle shader", SHADER)
+	module := shared.shader_module(a.device, "triangle shader", SHADER)
 	defer wgpu.ShaderModuleRelease(module)
 
 	targets := [?]wgpu.ColorTargetState{wgpu.COLOR_TARGET_STATE_INIT}
@@ -92,7 +92,7 @@ main :: proc() {
 	time: f32
 	last := glfw.GetTime()
 
-	for app.poll(&a) {
+	for shared.poll(&a) {
 		now := glfw.GetTime()
 		space_down := glfw.GetKey(a.window, glfw.KEY_SPACE) == glfw.PRESS
 		if space_down && !space_was_down {
@@ -104,7 +104,7 @@ main :: proc() {
 		}
 		last = now
 
-		texture, ok := app.acquire(&a)
+		texture, ok := shared.acquire(&a)
 		if !ok {
 			continue
 		}
@@ -128,7 +128,7 @@ main :: proc() {
 
 		commands := wgpu.CommandEncoderFinish(encoder)
 		wgpu.QueueSubmit(a.queue, 1, &commands)
-		app.present(&a)
+		shared.present(&a)
 
 		wgpu.CommandBufferRelease(commands)
 		wgpu.CommandEncoderRelease(encoder)

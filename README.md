@@ -19,7 +19,7 @@ Linux only for now (Vulkan backend, Wayland surfaces).
 | `tools/update_dawn.sh` | Imports a Dawn install and regenerates the bindings. |
 | `dawn/include/dawn/` | Snapshot of the Dawn headers the bindings were generated from. |
 | `lib/linux-x86_64/` | `libwebgpu_dawn.a`, copied by `update_dawn.sh`. Not committed (about 50 MB). |
-| `examples/` | `triangle` (rotating triangle) and `cube` (rotating textured cube). `app/` holds their shared setup. |
+| `examples/` | `triangle` (rotating triangle) and `cube` (rotating textured cube). `shared/` holds their common setup (not an example itself). |
 
 ## Setup
 

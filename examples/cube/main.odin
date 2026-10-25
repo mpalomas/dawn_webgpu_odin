@@ -5,7 +5,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:os"
 import "vendor:glfw"
-import "../app"
+import "../shared"
 import wgpu "../../webgpu"
 
 SHADER :: `
@@ -107,7 +107,7 @@ perspective :: proc(fovy, aspect, near, far: f32) -> matrix[4, 4]f32 {
 	}
 }
 
-create_depth_view :: proc(a: ^app.App) -> (wgpu.Texture, wgpu.TextureView) {
+create_depth_view :: proc(a: ^shared.App) -> (wgpu.Texture, wgpu.TextureView) {
 	desc := wgpu.TEXTURE_DESCRIPTOR_INIT
 	desc.label = "depth"
 	desc.usage = {.RenderAttachment}
@@ -119,11 +119,11 @@ create_depth_view :: proc(a: ^app.App) -> (wgpu.Texture, wgpu.TextureView) {
 }
 
 main :: proc() {
-	a: app.App
-	if !app.init(&a, "dawn_webgpu_odin: cube", 800, 600) {
+	a: shared.App
+	if !shared.init(&a, "dawn_webgpu_odin: cube", 800, 600) {
 		os.exit(1)
 	}
-	defer app.shutdown(&a)
+	defer shared.shutdown(&a)
 
 	// Geometry
 	vertices, indices := cube_mesh()
@@ -161,7 +161,7 @@ main :: proc() {
 	defer wgpu.SamplerRelease(sampler)
 
 	// Pipeline
-	module := app.shader_module(a.device, "cube shader", SHADER)
+	module := shared.shader_module(a.device, "cube shader", SHADER)
 	defer wgpu.ShaderModuleRelease(module)
 
 	attributes := [?]wgpu.VertexAttribute{
@@ -223,7 +223,7 @@ main :: proc() {
 	angle: f32
 	last := glfw.GetTime()
 
-	for app.poll(&a) {
+	for shared.poll(&a) {
 		now := glfw.GetTime()
 		space_down := glfw.GetKey(a.window, glfw.KEY_SPACE) == glfw.PRESS
 		if space_down && !space_was_down {
@@ -235,7 +235,7 @@ main :: proc() {
 		}
 		last = now
 
-		frame_texture, ok := app.acquire(&a)
+		frame_texture, ok := shared.acquire(&a)
 		if !ok {
 			continue
 		}
@@ -280,7 +280,7 @@ main :: proc() {
 
 		commands := wgpu.CommandEncoderFinish(encoder)
 		wgpu.QueueSubmit(a.queue, 1, &commands)
-		app.present(&a)
+		shared.present(&a)
 
 		wgpu.CommandBufferRelease(commands)
 		wgpu.CommandEncoderRelease(encoder)

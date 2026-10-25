@@ -1,5 +1,5 @@
 // Window, device and surface setup shared by the examples.
-package app
+package shared
 
 import "base:runtime"
 import "core:fmt"
