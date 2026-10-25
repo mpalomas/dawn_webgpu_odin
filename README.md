@@ -15,6 +15,7 @@ Linux only for now (Vulkan backend, Wayland surfaces).
 | `webgpu/` | Package `webgpu`. `webgpu_generated.odin` is generated, `webgpu.odin` is hand-written. |
 | `glfwglue/` | `GetSurface(instance, window)`: a surface for a `vendor:glfw` window (Wayland or X11). |
 | `tools/gen/` | The generator, `webgpu.h` → Odin, with its tests. |
+| `tools/build-vulkan-min.sh` | Builds Dawn for these bindings. Copy it to the Dawn checkout's root first. |
 | `tools/update_dawn.sh` | Imports a Dawn install and regenerates the bindings. |
 | `dawn/include/dawn/` | Snapshot of the Dawn headers the bindings were generated from. |
 | `lib/linux-x86_64/` | `libwebgpu_dawn.a`, copied by `update_dawn.sh`. Not committed (about 50 MB). |
@@ -22,8 +23,16 @@ Linux only for now (Vulkan backend, Wayland surfaces).
 
 ## Setup
 
-Build and install Dawn as a static monolithic library, e.g. with `build-vulkan-min.sh` from the Dawn
-checkout, then import it:
+Build and install Dawn as a static monolithic library. `tools/build-vulkan-min.sh` does a size-optimized,
+Vulkan-only build. It uses its own location as the Dawn source directory, so copy it to the root of your
+Dawn checkout and run it from there:
+
+```sh
+cp tools/build-vulkan-min.sh ~/dev/c++/dawn/
+~/dev/c++/dawn/build-vulkan-min.sh all   # configure, build (MinSizeRel), install
+```
+
+Then import the install:
 
 ```sh
 tools/update_dawn.sh ~/dev/c++/dawn/build-vulkan-min/install
