@@ -1,7 +1,6 @@
 // A rotating cube with a checkerboard texture, tinted with one color per face. Space pauses, Esc quits.
 package main
 
-import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:os"
@@ -223,7 +222,6 @@ main :: proc() {
 	space_was_down := false
 	angle: f32
 	last := glfw.GetTime()
-	frames := 0
 
 	for app.poll(&a) {
 		now := glfw.GetTime()
@@ -282,14 +280,11 @@ main :: proc() {
 
 		commands := wgpu.CommandEncoderFinish(encoder)
 		wgpu.QueueSubmit(a.queue, 1, &commands)
-		wgpu.SurfacePresent(a.surface)
+		app.present(&a)
 
 		wgpu.CommandBufferRelease(commands)
 		wgpu.CommandEncoderRelease(encoder)
 		wgpu.TextureViewRelease(view)
 		wgpu.TextureRelease(frame_texture)
-
-		frames += 1
 	}
-	fmt.println("frames:", frames)
 }

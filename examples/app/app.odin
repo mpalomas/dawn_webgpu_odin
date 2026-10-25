@@ -24,7 +24,22 @@ App :: struct {
 	resized:  bool,
 	// From `--seconds=N`: close the window after N seconds, 0 to run until closed.
 	seconds:  f64,
+	stats:    Frame_Stats,
 }
+
+// Frame timing, measured between presents and printed once per second.
+Frame_Stats :: struct {
+	total_frames:   int,
+	first_present:  f64,
+	last_present:   f64,
+	// The current one-second window.
+	window_start:   f64,
+	window_frames:  int,
+	window_min:     f64,
+	window_max:     f64,
+}
+
+STATS_INTERVAL :: 1.0
 
 // Opens a window and creates a Dawn device that renders to it.
 init :: proc(app: ^App, title: cstring, width, height: i32) -> bool {
@@ -97,6 +112,11 @@ init :: proc(app: ^App, title: cstring, width, height: i32) -> bool {
 }
 
 shutdown :: proc(app: ^App) {
+	s := &app.stats
+	if s.total_frames > 1 {
+		elapsed := s.last_present - s.first_present
+		fmt.printfln("%d frames in %.2f s, average %.2f fps", s.total_frames, elapsed, f64(s.total_frames - 1) / elapsed)
+	}
 	wgpu.QueueRelease(app.queue)
 	wgpu.DeviceRelease(app.device)
 	wgpu.AdapterRelease(app.adapter)
@@ -156,6 +176,36 @@ acquire :: proc(app: ^App) -> (wgpu.Texture, bool) {
 	return nil, false
 }
 
+// Presents the frame acquired with `acquire`, and prints the frame rate once per second.
+present :: proc(app: ^App) {
+	wgpu.SurfacePresent(app.surface)
+
+	s := &app.stats
+	now := glfw.GetTime()
+	if s.total_frames == 0 {
+		s.first_present = now
+		s.window_start = now
+	} else {
+		dt := now - s.last_present
+		if s.window_frames == 0 {
+			s.window_min, s.window_max = dt, dt
+		}
+		s.window_min = min(s.window_min, dt)
+		s.window_max = max(s.window_max, dt)
+		s.window_frames += 1
+	}
+	s.last_present = now
+	s.total_frames += 1
+
+	elapsed := now - s.window_start
+	if elapsed >= STATS_INTERVAL && s.window_frames > 0 {
+		fmt.printfln("fps: %.2f  frame: %.2f ms (min %.2f, max %.2f)",
+			f64(s.window_frames) / elapsed, elapsed * 1000 / f64(s.window_frames), s.window_min * 1000, s.window_max * 1000)
+		s.window_start = now
+		s.window_frames = 0
+	}
+}
+
 // Builds a shader module from WGSL source.
 shader_module :: proc(device: wgpu.Device, label: string, code: string) -> wgpu.ShaderModule {
 	wgsl := wgpu.SHADER_SOURCE_WGSL_INIT
@@ -177,10 +227,45 @@ wait :: proc(app: ^App, future: wgpu.Future) -> bool {
 @(private = "file")
 print_adapter :: proc(adapter: wgpu.Adapter) {
 	info: wgpu.AdapterInfo
-	if wgpu.AdapterGetInfo(adapter, &info) == .Success {
-		fmt.printfln("adapter: %s (%v, %v)", wgpu.string_from_view(info.description), info.backendType, info.adapterType)
-		wgpu.AdapterInfoFreeMembers(info)
+	// Dawn reports the Vulkan driver version through an extension struct.
+	vk := wgpu.AdapterPropertiesVk{chain = {sType = .AdapterPropertiesVk}}
+	has_vk := wgpu.AdapterHasFeature(adapter, .AdapterPropertiesVk)
+	if has_vk {
+		info.nextInChain = &vk
 	}
+	if wgpu.AdapterGetInfo(adapter, &info) != .Success {
+		fmt.eprintln("wgpu.AdapterGetInfo failed")
+		return
+	}
+	defer wgpu.AdapterInfoFreeMembers(info)
+
+	fmt.println("adapter:")
+	print_field("description", wgpu.string_from_view(info.description))
+	print_field("device", fmt.tprintf("%s (0x%04x)", wgpu.string_from_view(info.device), info.deviceID))
+	print_field("vendor", fmt.tprintf("%s (0x%04x)", wgpu.string_from_view(info.vendor), info.vendorID))
+	print_field("architecture", wgpu.string_from_view(info.architecture))
+	print_field("type", fmt.tprint(info.adapterType))
+	print_field("backend", fmt.tprint(info.backendType))
+	if has_vk {
+		print_field("driver", vulkan_driver_version(vk.driverVersion, info.vendorID))
+	}
+}
+
+@(private = "file")
+print_field :: proc(name, value: string) {
+	if value != "" {
+		fmt.printfln("  %-13s %s", fmt.tprintf("%s:", name), value)
+	}
+}
+
+// Vulkan driver versions are vendor-specific. NVIDIA packs 10.8.8.6 bits; Mesa and most others use
+// VK_MAKE_VERSION's 10.10.12 bits.
+@(private = "file")
+vulkan_driver_version :: proc(v: u32, vendor_id: u32) -> string {
+	if vendor_id == 0x10DE {
+		return fmt.tprintf("%d.%d.%d.%d", v >> 22, (v >> 14) & 0xFF, (v >> 6) & 0xFF, v & 0x3F)
+	}
+	return fmt.tprintf("%d.%d.%d", v >> 22, (v >> 12) & 0x3FF, v & 0xFFF)
 }
 
 @(private = "file")
