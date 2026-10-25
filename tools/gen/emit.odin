@@ -37,13 +37,24 @@ C_PRIMITIVES :: [?][2]string{
 }
 
 // Dawn is C++ built against libstdc++. It loads Vulkan at runtime with dlopen.
+// DAWN_STATIC_CXX (in webgpu.odin) links libstdc++.a instead of libstdc++.so.
 FOREIGN_IMPORT :: `when ODIN_OS == .Linux {
-	foreign import lib {
-		DAWN_LIB,
-		"system:stdc++",
-		"system:m",
-		"system:dl",
-		"system:pthread",
+	when DAWN_STATIC_CXX {
+		foreign import lib {
+			DAWN_LIB,
+			"system:libstdc++.a",
+			"system:m",
+			"system:dl",
+			"system:pthread",
+		}
+	} else {
+		foreign import lib {
+			DAWN_LIB,
+			"system:stdc++",
+			"system:m",
+			"system:dl",
+			"system:pthread",
+		}
 	}
 }
 

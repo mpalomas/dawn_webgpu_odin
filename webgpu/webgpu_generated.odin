@@ -2505,12 +2505,22 @@ RENDER_PASS_DESCRIPTOR_INIT :: RenderPassDescriptor{}
 RENDER_PIPELINE_DESCRIPTOR_INIT :: RenderPipelineDescriptor{vertex = VERTEX_STATE_INIT, primitive = PRIMITIVE_STATE_INIT, multisample = MULTISAMPLE_STATE_INIT}
 
 when ODIN_OS == .Linux {
-	foreign import lib {
-		DAWN_LIB,
-		"system:stdc++",
-		"system:m",
-		"system:dl",
-		"system:pthread",
+	when DAWN_STATIC_CXX {
+		foreign import lib {
+			DAWN_LIB,
+			"system:libstdc++.a",
+			"system:m",
+			"system:dl",
+			"system:pthread",
+		}
+	} else {
+		foreign import lib {
+			DAWN_LIB,
+			"system:stdc++",
+			"system:m",
+			"system:dl",
+			"system:pthread",
+		}
 	}
 }
 

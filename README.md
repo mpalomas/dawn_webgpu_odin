@@ -58,8 +58,18 @@ import wgpu "dawn:webgpu"
 import glue "dawn:glfwglue"
 ```
 
-`-define:DAWN_LIB=<path>` links another `libwebgpu_dawn.a`. The library also needs libstdc++, which the
-bindings link with.
+`-define:DAWN_LIB=<path>` links another `libwebgpu_dawn.a`.
+
+### Distributing binaries
+
+Dawn is C++ and needs the C++ runtime, libstdc++. By default it is linked dynamically, so the program
+requires a `libstdc++.so.6` at least as recent as the one it was built with (`GLIBCXX_3.4.35` with GCC 16),
+and fails to start on older distributions. `-define:DAWN_STATIC_CXX=true` links `libstdc++.a` instead
+(about +0.9 MB), which removes that requirement.
+
+glibc stays dynamic, and the program requires a glibc at least as recent as the build machine's. To
+support older distributions, build Dawn and the program on the oldest one you target (e.g. in a container).
+The target also needs `libglfw.so.3` (for the glue and examples) and a Vulkan driver.
 
 ### Conventions
 

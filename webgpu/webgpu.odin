@@ -6,6 +6,10 @@ import "base:runtime"
 // Path of the static Dawn library, relative to this directory. Override with -define:DAWN_LIB=<path>.
 DAWN_LIB :: #config(DAWN_LIB, "../lib/linux-x86_64/libwebgpu_dawn.a")
 
+// Link the C++ runtime statically (libstdc++.a), so the program does not require a recent libstdc++.so
+// on the machines it runs on. Enable with -define:DAWN_STATIC_CXX=true.
+DAWN_STATIC_CXX :: #config(DAWN_STATIC_CXX, false)
+
 when ODIN_OS == .Linux {
 	when !#exists(DAWN_LIB) {
 		#panic("Could not find the Dawn library at '" + DAWN_LIB + "'. Run tools/update_dawn.sh <dawn install dir>, or pass -define:DAWN_LIB=<path>.")
