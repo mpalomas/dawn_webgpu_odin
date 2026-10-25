@@ -1,0 +1,3 @@
+lib/**/*.a
+*.bin
+/examples/*/*.bin
