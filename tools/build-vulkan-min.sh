@@ -3,7 +3,7 @@
 #
 # Usage: ./build-vulkan-min.sh <command>
 #   configure  Fresh configure (discards the existing CMake cache)
-#   build      Build MinSizeRel
+#   build      Build Release, optimized for size
 #   install    Install into $INSTALL_DIR
 #   all        configure + build + install
 #   clean      Delete the build directory
@@ -20,12 +20,18 @@ BUILD_DIR="${BUILD_DIR:-$SRC_DIR/build-vulkan-min}"
 INSTALL_DIR="${INSTALL_DIR:-$BUILD_DIR/install}"
 JOBS="${JOBS:-$(nproc)}"
 
+# Release, optimized for size. Not MinSizeRel: Dawn treats every build type but Release and RelWithDebInfo
+# as a debug build, which enables its asserts and error injection.
+RELEASE_FLAGS="-Os -DNDEBUG"
+
 # Let the linker of the final app drop unused functions with -Wl,--gc-sections.
 SIZE_FLAGS="-ffunction-sections -fdata-sections"
 
 configure() {
     cmake -S "$SRC_DIR" -B "$BUILD_DIR" --fresh -G Ninja \
-        -DCMAKE_BUILD_TYPE=MinSizeRel \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_FLAGS_RELEASE="$RELEASE_FLAGS" \
+        -DCMAKE_CXX_FLAGS_RELEASE="$RELEASE_FLAGS" \
         -DCMAKE_C_COMPILER=clang \
         -DCMAKE_CXX_COMPILER=clang++ \
         -DCMAKE_C_FLAGS="$SIZE_FLAGS" \
@@ -67,7 +73,7 @@ configure() {
         -DTINT_BUILD_WGSL_READER=ON \
         -DTINT_BUILD_SPV_WRITER=ON \
         -DTINT_BUILD_SPV_READER=OFF \
-        -DTINT_BUILD_WGSL_WRITER=ON \
+        -DTINT_BUILD_WGSL_WRITER=OFF \
         -DTINT_BUILD_GLSL_WRITER=OFF \
         -DTINT_BUILD_GLSL_VALIDATOR=OFF \
         -DTINT_BUILD_HLSL_WRITER=OFF \
@@ -83,11 +89,11 @@ configure() {
 }
 
 build() {
-    cmake --build "$BUILD_DIR" --config MinSizeRel -j "$JOBS"
+    cmake --build "$BUILD_DIR" --config Release -j "$JOBS"
 }
 
 install() {
-    cmake --install "$BUILD_DIR" --config MinSizeRel
+    cmake --install "$BUILD_DIR" --config Release
     ls -lh "$INSTALL_DIR"/lib/*.a
 }
 
