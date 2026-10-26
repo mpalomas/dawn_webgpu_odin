@@ -2504,7 +2504,11 @@ FRAGMENT_STATE_INIT :: FragmentState{}
 RENDER_PASS_DESCRIPTOR_INIT :: RenderPassDescriptor{}
 RENDER_PIPELINE_DESCRIPTOR_INIT :: RenderPipelineDescriptor{vertex = VERTEX_STATE_INIT, primitive = PRIMITIVE_STATE_INIT, multisample = MULTISAMPLE_STATE_INIT}
 
-when ODIN_OS == .Linux {
+when DAWN_SHARED {
+	foreign import lib {
+		DAWN_LIB,
+	}
+} else when ODIN_OS == .Linux {
 	when DAWN_STATIC_CXX {
 		foreign import lib {
 			DAWN_LIB,
@@ -2521,6 +2525,18 @@ when ODIN_OS == .Linux {
 			"system:dl",
 			"system:pthread",
 		}
+	}
+} else when ODIN_OS == .Darwin {
+	foreign import lib {
+		DAWN_LIB,
+		"system:c++",
+		"system:Cocoa.framework",
+		"system:CoreFoundation.framework",
+		"system:Foundation.framework",
+		"system:IOKit.framework",
+		"system:IOSurface.framework",
+		"system:Metal.framework",
+		"system:QuartzCore.framework",
 	}
 }
 

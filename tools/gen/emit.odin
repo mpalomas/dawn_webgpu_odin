@@ -36,9 +36,14 @@ C_PRIMITIVES :: [?][2]string{
 	{"double", "f64"},
 }
 
-// Dawn is C++ built against libstdc++. It loads Vulkan at runtime with dlopen.
-// DAWN_STATIC_CXX (in webgpu.odin) links libstdc++.a instead of libstdc++.so.
-FOREIGN_IMPORT :: `when ODIN_OS == .Linux {
+// The shared library carries its own dependencies. The static one needs the C++ runtime and, on macOS,
+// the frameworks of the Metal backend. On Linux, Dawn loads Vulkan at runtime with dlopen.
+// DAWN_SHARED, DAWN_LIB and DAWN_STATIC_CXX are in webgpu.odin.
+FOREIGN_IMPORT :: `when DAWN_SHARED {
+	foreign import lib {
+		DAWN_LIB,
+	}
+} else when ODIN_OS == .Linux {
 	when DAWN_STATIC_CXX {
 		foreign import lib {
 			DAWN_LIB,
@@ -55,6 +60,18 @@ FOREIGN_IMPORT :: `when ODIN_OS == .Linux {
 			"system:dl",
 			"system:pthread",
 		}
+	}
+} else when ODIN_OS == .Darwin {
+	foreign import lib {
+		DAWN_LIB,
+		"system:c++",
+		"system:Cocoa.framework",
+		"system:CoreFoundation.framework",
+		"system:Foundation.framework",
+		"system:IOKit.framework",
+		"system:IOSurface.framework",
+		"system:Metal.framework",
+		"system:QuartzCore.framework",
 	}
 }
 
