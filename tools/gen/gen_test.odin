@@ -281,12 +281,16 @@ test_generated_is_up_to_date :: proc(t: ^testing.T) {
 	context.allocator = vmem.arena_allocator(&arena)
 
 	header, err1 := os.read_entire_file(HEADER_PATH, context.allocator)
-	version, err2 := os.read_entire_file(VERSION_PATH, context.allocator)
-	generated, err3 := os.read_entire_file(GENERATED_PATH, context.allocator)
-	if !testing.expect(t, err1 == nil && err2 == nil && err3 == nil, "cannot read the header or the generated file") {
+	generated, err2 := os.read_entire_file(GENERATED_PATH, context.allocator)
+	if !testing.expect(t, err1 == nil && err2 == nil, "cannot read the header or the generated file") {
 		return
 	}
-	out, err := generate(string(header), "dawn/include/dawn/webgpu.h", parse_dawn_version(string(version)))
+	// Dawns before M158 install no dawn_version.h.
+	version := ""
+	if src, version_err := os.read_entire_file(VERSION_PATH, context.allocator); version_err == nil {
+		version = parse_dawn_version(string(src))
+	}
+	out, err := generate(string(header), "dawn/include/dawn/webgpu.h", version)
 	if !testing.expectf(t, err == "", "generate failed: %s", err) {
 		return
 	}

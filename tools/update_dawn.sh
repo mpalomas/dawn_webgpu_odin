@@ -6,7 +6,8 @@
 #     tools/update_dawn.sh ~/dev/c++/dawn/build-metal-min-static/install ~/dev/c++/dawn/build-metal-min-shared/install
 #   Defaults to the installs of tools/build-vulkan-min.sh (Linux) or tools/build-metal-min.sh (macOS).
 #
-# Copies include/dawn/{webgpu.h,dawn_version.h} to dawn/include/dawn/ (committed), the libraries found in
+# Copies include/dawn/{webgpu.h,dawn_version.h} to dawn/include/dawn/ (committed; older Dawns, such as
+# Chrome release branches before M158, install no dawn_version.h), the libraries found in
 # lib/ (libwebgpu_dawn.a, .so or .dylib) to lib/<os>-<arch>/ (gitignored), then runs tools/gen.
 # The installs must have the same webgpu.h: the bindings are generated once for all of them.
 # Environment: ODIN (default: odin from PATH, else ~/dev/odin/Odin/odin)
@@ -42,12 +43,10 @@ fi
 
 LIBS=()
 for install in "${INSTALLS[@]}"; do
-    for f in include/dawn/webgpu.h include/dawn/dawn_version.h; do
-        if [[ ! -f "$install/$f" ]]; then
-            echo "error: $install/$f not found" >&2
-            exit 1
-        fi
-    done
+    if [[ ! -f "$install/include/dawn/webgpu.h" ]]; then
+        echo "error: $install/include/dawn/webgpu.h not found" >&2
+        exit 1
+    fi
     if ! cmp -s "$install/include/dawn/webgpu.h" "${INSTALLS[0]}/include/dawn/webgpu.h"; then
         echo "error: $install and ${INSTALLS[0]} have different webgpu.h, they are not the same Dawn version" >&2
         exit 1
@@ -66,7 +65,15 @@ for install in "${INSTALLS[@]}"; do
 done
 
 mkdir -p "$REPO/dawn/include/dawn" "$LIB_DIR"
-cp "${INSTALLS[0]}/include/dawn/webgpu.h" "${INSTALLS[0]}/include/dawn/dawn_version.h" "$REPO/dawn/include/dawn/"
+cp "${INSTALLS[0]}/include/dawn/webgpu.h" "$REPO/dawn/include/dawn/"
+VERSION_H=()
+if [[ -f "${INSTALLS[0]}/include/dawn/dawn_version.h" ]]; then
+    cp "${INSTALLS[0]}/include/dawn/dawn_version.h" "$REPO/dawn/include/dawn/"
+    VERSION_H=(dawn/include/dawn/dawn_version.h)
+else
+    # Don't leave the header of another Dawn version behind.
+    rm -f "$REPO/dawn/include/dawn/dawn_version.h"
+fi
 for lib in "${LIBS[@]}"; do
     cp "$lib" "$LIB_DIR/"
     echo "Copied $lib"
@@ -74,7 +81,7 @@ done
 
 cd "$REPO"
 "$ODIN" run tools/gen -out:tools/gen/gen.bin -- \
-    dawn/include/dawn/webgpu.h wgpu/wgpu_generated.odin dawn/include/dawn/dawn_version.h
+    dawn/include/dawn/webgpu.h wgpu/wgpu_generated.odin ${VERSION_H[@]+"${VERSION_H[@]}"}
 if [[ -f "$LIB_DIR/libwebgpu_dawn.a" ]]; then
     "$ODIN" check wgpu -no-entry-point
 fi
@@ -82,4 +89,4 @@ if [[ -f "$LIB_DIR/libwebgpu_dawn.dylib" || -f "$LIB_DIR/libwebgpu_dawn.so" ]]; 
     "$ODIN" check wgpu -no-entry-point -define:DAWN_SHARED=true
 fi
 
-echo "Updated to $(grep -E '^// Dawn version' wgpu/wgpu_generated.odin)"
+echo "Updated to $(grep -E '^// Dawn version' wgpu/wgpu_generated.odin || echo "a Dawn without dawn_version.h")"

@@ -17,12 +17,22 @@ layout, names and wrappers, so code using the core API builds against either
 | `tools/gen/` | The generator, `webgpu.h` → Odin, with its tests. |
 | `tools/build-{vulkan,metal}-min.sh` | Build Dawn for Linux or macOS. Run from the Dawn checkout's root. |
 | `tools/update_dawn.sh` | Imports Dawn installs and regenerates the bindings. |
+| `tools/dawn_for_chrome.sh` | Finds the Dawn commit of a Chrome release, and checks it out. |
 | `tools/compare_vendor_wgpu.py` | Lists the differences with `vendor:wgpu`. |
 | `dawn/include/dawn/` | The Dawn headers the bindings were generated from. |
 | `lib/<os>-<arch>/` | The Dawn libraries, copied by `update_dawn.sh`. Not committed. |
 | `examples/` | `triangle` and `cube`, with their common setup in `shared/`. |
 
 ## Setup
+
+Dawn has no releases: Chrome's are the reference. `dawn_for_chrome.sh` finds the Dawn commit of a Chrome
+version, milestone or channel through Gitiles, and with `--fetch` makes a shallow checkout of it (`--deps`
+adds Dawn's dependencies, about 1.3 GB in all). `--env` prints `KEY=VALUE` lines for CI:
+
+```sh
+tools/dawn_for_chrome.sh 156.0.8078.48          # or 156, or stable/beta/dev/canary
+tools/dawn_for_chrome.sh --fetch ~/dev/c++/dawn --deps stable
+```
 
 The build scripts make size-optimized, single-backend, monolithic Dawn builds. Copy them to your Dawn
 checkout's root and run them from there:
