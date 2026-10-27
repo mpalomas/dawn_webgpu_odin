@@ -1,4 +1,8 @@
 // Window, device and surface setup shared by the examples.
+//
+// The examples build against this repo's Dawn bindings or against Odin's vendor:wgpu (wgpu-native): both
+// packages live in a `wgpu` directory, and the `gpu` collection selects one. vendor:wgpu has no `_INIT`
+// constants, so the examples spell out the fields whose default is not zero.
 package shared
 
 import "base:runtime"
@@ -7,8 +11,11 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "vendor:glfw"
-import glue "../../glfwglue"
-import wgpu "../../webgpu"
+import "gpu:wgpu"
+import glue "gpu:wgpu/glfwglue"
+
+// Building against Dawn. Pass -define:DAWN=false with -collection:gpu=<odin root>/vendor.
+DAWN :: #config(DAWN, true)
 
 App :: struct {
 	window:   glfw.WindowHandle,
@@ -41,7 +48,7 @@ Frame_Stats :: struct {
 
 STATS_INTERVAL :: 1.0
 
-// Opens a window and creates a Dawn device that renders to it.
+// Opens a window and creates a device that renders to it.
 init :: proc(app: ^App, title: cstring, width, height: i32) -> bool {
 	for arg in os.args[1:] {
 		if strings.has_prefix(arg, "--seconds=") {
@@ -62,44 +69,46 @@ init :: proc(app: ^App, title: cstring, width, height: i32) -> bool {
 		return false
 	}
 
-	// TimedWaitAny lets InstanceWaitAny block until a future completes.
-	features := [?]wgpu.InstanceFeatureName{.TimedWaitAny}
-	app.instance = wgpu.CreateInstance(&{requiredFeatureCount = len(features), requiredFeatures = &features[0]})
+	app.instance = wgpu.CreateInstance()
 	if app.instance == nil {
 		fmt.eprintln("wgpu.CreateInstance failed")
 		return false
 	}
 	app.surface = glue.GetSurface(app.instance, app.window)
 
-	adapter_options := wgpu.REQUEST_ADAPTER_OPTIONS_INIT
-	adapter_options.compatibleSurface = app.surface
-	adapter_options.powerPreference = .HighPerformance
-	future := wgpu.InstanceRequestAdapter(app.instance, &adapter_options, {
-		mode = .WaitAnyOnly,
+	done := false
+	wgpu.InstanceRequestAdapter(app.instance, &{compatibleSurface = app.surface, powerPreference = .HighPerformance}, {
+		mode = .AllowProcessEvents,
 		callback = on_adapter,
 		userdata1 = &app.adapter,
+		userdata2 = &done,
 	})
-	if !wait(app, future) || app.adapter == nil {
+	wait(app, &done)
+	if app.adapter == nil {
 		return false
 	}
 	print_adapter(app.adapter)
 
-	device_desc := wgpu.DEVICE_DESCRIPTOR_INIT
-	device_desc.label = "example device"
-	device_desc.deviceLostCallbackInfo = {mode = .AllowSpontaneous, callback = on_device_lost}
-	device_desc.uncapturedErrorCallbackInfo = {callback = on_uncaptured_error}
-	future = wgpu.AdapterRequestDevice(app.adapter, &device_desc, {
-		mode = .WaitAnyOnly,
+	device_desc := wgpu.DeviceDescriptor{
+		label = "example device",
+		deviceLostCallbackInfo = {mode = .AllowProcessEvents, callback = on_device_lost},
+		uncapturedErrorCallbackInfo = {callback = on_uncaptured_error},
+	}
+	done = false
+	wgpu.AdapterRequestDevice(app.adapter, &device_desc, {
+		mode = .AllowProcessEvents,
 		callback = on_device,
 		userdata1 = &app.device,
+		userdata2 = &done,
 	})
-	if !wait(app, future) || app.device == nil {
+	wait(app, &done)
+	if app.device == nil {
 		return false
 	}
 	app.queue = wgpu.DeviceGetQueue(app.device)
 
-	caps: wgpu.SurfaceCapabilities
-	if wgpu.SurfaceGetCapabilities(app.surface, app.adapter, &caps) != .Success || caps.formatCount == 0 {
+	caps, caps_status := wgpu.SurfaceGetCapabilities(app.surface, app.adapter)
+	if caps_status != .Success || caps.formatCount == 0 {
 		fmt.eprintln("wgpu.SurfaceGetCapabilities failed")
 		return false
 	}
@@ -146,22 +155,22 @@ poll :: proc(app: ^App) -> bool {
 configure_surface :: proc(app: ^App) {
 	w, h := glfw.GetFramebufferSize(app.window)
 	app.width, app.height = u32(max(w, 1)), u32(max(h, 1))
-	config := wgpu.SURFACE_CONFIGURATION_INIT
-	config.device = app.device
-	config.format = app.format
-	config.width = app.width
-	config.height = app.height
-	config.presentMode = .Fifo
-	config.alphaMode = .Auto
-	wgpu.SurfaceConfigure(app.surface, &config)
+	wgpu.SurfaceConfigure(app.surface, &{
+		device = app.device,
+		format = app.format,
+		usage = {.RenderAttachment},
+		width = app.width,
+		height = app.height,
+		presentMode = .Fifo,
+		alphaMode = .Auto,
+	})
 	app.resized = true
 }
 
 // Returns the texture to render the next frame to, or false when this frame must be skipped.
 acquire :: proc(app: ^App) -> (wgpu.Texture, bool) {
-	st: wgpu.SurfaceTexture
-	wgpu.SurfaceGetCurrentTexture(app.surface, &st)
-	switch st.status {
+	st := wgpu.SurfaceGetCurrentTexture(app.surface)
+	#partial switch st.status {
 	case .SuccessOptimal, .SuccessSuboptimal:
 		return st.texture, true
 	case .Outdated, .Lost:
@@ -169,9 +178,10 @@ acquire :: proc(app: ^App) -> (wgpu.Texture, bool) {
 			wgpu.TextureRelease(st.texture)
 		}
 		configure_surface(app)
-	case .Timeout:
 	case .Error:
 		fmt.panicf("wgpu.SurfaceGetCurrentTexture failed: %v", st.status)
+	case:
+		// Timeout, or wgpu-native's Occluded (minimized window).
 	}
 	return nil, false
 }
@@ -208,46 +218,48 @@ present :: proc(app: ^App) {
 
 // Builds a shader module from WGSL source.
 shader_module :: proc(device: wgpu.Device, label: string, code: string) -> wgpu.ShaderModule {
-	wgsl := wgpu.SHADER_SOURCE_WGSL_INIT
-	wgsl.code = code
+	wgsl := wgpu.ShaderSourceWGSL{chain = {sType = .ShaderSourceWGSL}, code = code}
 	return wgpu.DeviceCreateShaderModule(device, &{nextInChain = &wgsl, label = label})
 }
 
+// Processes events until a callback sets `done`. InstanceWaitAny would block instead of spinning, but
+// wgpu-native does not implement it.
 @(private = "file")
-wait :: proc(app: ^App, future: wgpu.Future) -> bool {
-	info := wgpu.FutureWaitInfo{future = future}
-	status := wgpu.InstanceWaitAny(app.instance, 1, &info, max(u64))
-	if status != .Success {
-		fmt.eprintln("wgpu.InstanceWaitAny failed:", status)
-		return false
+wait :: proc(app: ^App, done: ^bool) {
+	for !done^ {
+		wgpu.InstanceProcessEvents(app.instance)
 	}
-	return true
 }
 
 @(private = "file")
 print_adapter :: proc(adapter: wgpu.Adapter) {
 	info: wgpu.AdapterInfo
-	// Dawn reports the Vulkan driver version through an extension struct.
-	vk := wgpu.AdapterPropertiesVk{chain = {sType = .AdapterPropertiesVk}}
-	has_vk := wgpu.AdapterHasFeature(adapter, .AdapterPropertiesVk)
-	if has_vk {
-		info.nextInChain = &vk
+	when DAWN {
+		// Dawn reports the Vulkan driver version through an extension struct.
+		vk := wgpu.AdapterPropertiesVk{chain = {sType = .AdapterPropertiesVk}}
+		has_vk := wgpu.AdapterHasFeature(adapter, .AdapterPropertiesVk)
+		if has_vk {
+			info.nextInChain = &vk
+		}
 	}
-	if wgpu.AdapterGetInfo(adapter, &info) != .Success {
+	// The Raw proc, to pass the chained struct.
+	if wgpu.RawAdapterGetInfo(adapter, &info) != .Success {
 		fmt.eprintln("wgpu.AdapterGetInfo failed")
 		return
 	}
 	defer wgpu.AdapterInfoFreeMembers(info)
 
 	fmt.println("adapter:")
-	print_field("description", wgpu.string_from_view(info.description))
-	print_field("device", fmt.tprintf("%s (0x%04x)", wgpu.string_from_view(info.device), info.deviceID))
-	print_field("vendor", fmt.tprintf("%s (0x%04x)", wgpu.string_from_view(info.vendor), info.vendorID))
-	print_field("architecture", wgpu.string_from_view(info.architecture))
+	print_field("description", string_from_view(info.description))
+	print_field("device", fmt.tprintf("%s (0x%04x)", string_from_view(info.device), info.deviceID))
+	print_field("vendor", fmt.tprintf("%s (0x%04x)", string_from_view(info.vendor), info.vendorID))
+	print_field("architecture", string_from_view(info.architecture))
 	print_field("type", fmt.tprint(info.adapterType))
 	print_field("backend", fmt.tprint(info.backendType))
-	if has_vk {
-		print_field("driver", vulkan_driver_version(vk.driverVersion, info.vendorID))
+	when DAWN {
+		if has_vk {
+			print_field("driver", vulkan_driver_version(vk.driverVersion, info.vendorID))
+		}
 	}
 }
 
@@ -271,8 +283,9 @@ vulkan_driver_version :: proc(v: u32, vendor_id: u32) -> string {
 @(private = "file")
 on_adapter :: proc "c" (status: wgpu.RequestAdapterStatus, adapter: wgpu.Adapter, message: wgpu.StringView, userdata1, userdata2: rawptr) {
 	context = runtime.default_context()
+	(^bool)(userdata2)^ = true
 	if status != .Success {
-		fmt.eprintfln("request adapter failed: %v: %s", status, wgpu.string_from_view(message))
+		fmt.eprintfln("request adapter failed: %v: %s", status, string_from_view(message))
 		return
 	}
 	(^wgpu.Adapter)(userdata1)^ = adapter
@@ -281,8 +294,9 @@ on_adapter :: proc "c" (status: wgpu.RequestAdapterStatus, adapter: wgpu.Adapter
 @(private = "file")
 on_device :: proc "c" (status: wgpu.RequestDeviceStatus, device: wgpu.Device, message: wgpu.StringView, userdata1, userdata2: rawptr) {
 	context = runtime.default_context()
+	(^bool)(userdata2)^ = true
 	if status != .Success {
-		fmt.eprintfln("request device failed: %v: %s", status, wgpu.string_from_view(message))
+		fmt.eprintfln("request device failed: %v: %s", status, string_from_view(message))
 		return
 	}
 	(^wgpu.Device)(userdata1)^ = device
@@ -292,12 +306,26 @@ on_device :: proc "c" (status: wgpu.RequestDeviceStatus, device: wgpu.Device, me
 on_device_lost :: proc "c" (device: ^wgpu.Device, reason: wgpu.DeviceLostReason, message: wgpu.StringView, userdata1, userdata2: rawptr) {
 	context = runtime.default_context()
 	if reason != .Destroyed && reason != .CallbackCancelled {
-		fmt.eprintfln("device lost: %v: %s", reason, wgpu.string_from_view(message))
+		fmt.eprintfln("device lost: %v: %s", reason, string_from_view(message))
 	}
 }
 
 @(private = "file")
 on_uncaptured_error :: proc "c" (device: ^wgpu.Device, type: wgpu.ErrorType, message: wgpu.StringView, userdata1, userdata2: rawptr) {
 	context = runtime.default_context()
-	fmt.eprintfln("webgpu error: %v: %s", type, wgpu.string_from_view(message))
+	fmt.eprintfln("webgpu error: %v: %s", type, string_from_view(message))
+}
+
+// Converts a StringView to an Odin string. A null-terminated view has a length of STRLEN, an absent one
+// nil data and STRLEN. Dawn's package has the same proc, vendor:wgpu has none.
+@(private = "file")
+string_from_view :: proc "contextless" (s: wgpu.StringView) -> string {
+	raw := transmute(runtime.Raw_String)s
+	if raw.len != wgpu.STRLEN {
+		return s
+	}
+	if raw.data == nil {
+		return ""
+	}
+	return string(cstring(raw.data))
 }

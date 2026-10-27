@@ -4,7 +4,7 @@ package main
 import "core:os"
 import "vendor:glfw"
 import "../shared"
-import wgpu "../../webgpu"
+import "gpu:wgpu"
 
 SHADER :: `
 struct Uniforms {
@@ -53,21 +53,20 @@ main :: proc() {
 	module := shared.shader_module(a.device, "triangle shader", SHADER)
 	defer wgpu.ShaderModuleRelease(module)
 
-	targets := [?]wgpu.ColorTargetState{wgpu.COLOR_TARGET_STATE_INIT}
-	targets[0].format = a.format
-	fragment := wgpu.FRAGMENT_STATE_INIT
-	fragment.module = module
-	fragment.entryPoint = "fs_main"
-	fragment.targetCount = len(targets)
-	fragment.targets = &targets[0]
-
-	pipeline_desc := wgpu.RENDER_PIPELINE_DESCRIPTOR_INIT
-	pipeline_desc.label = "triangle pipeline"
-	pipeline_desc.vertex.module = module
-	pipeline_desc.vertex.entryPoint = "vs_main"
-	pipeline_desc.primitive.topology = .TriangleList
-	pipeline_desc.fragment = &fragment
-	pipeline := wgpu.DeviceCreateRenderPipeline(a.device, &pipeline_desc)
+	targets := [?]wgpu.ColorTargetState{{format = a.format, writeMask = wgpu.ColorWriteMaskFlags_All}}
+	fragment := wgpu.FragmentState{
+		module = module,
+		entryPoint = "fs_main",
+		targetCount = len(targets),
+		targets = &targets[0],
+	}
+	pipeline := wgpu.DeviceCreateRenderPipeline(a.device, &{
+		label = "triangle pipeline",
+		vertex = {module = module, entryPoint = "vs_main"},
+		primitive = {topology = .TriangleList},
+		multisample = {count = 1, mask = 0xFFFFFFFF},
+		fragment = &fragment,
+	})
 	defer wgpu.RenderPipelineRelease(pipeline)
 
 	uniform_buffer := wgpu.DeviceCreateBuffer(a.device, &{
@@ -114,20 +113,22 @@ main :: proc() {
 		view := wgpu.TextureCreateView(texture)
 		encoder := wgpu.DeviceCreateCommandEncoder(a.device)
 
-		color := wgpu.RENDER_PASS_COLOR_ATTACHMENT_INIT
-		color.view = view
-		color.loadOp = .Clear
-		color.storeOp = .Store
-		color.clearValue = {0.05, 0.05, 0.08, 1}
+		color := wgpu.RenderPassColorAttachment{
+			view = view,
+			depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
+			loadOp = .Clear,
+			storeOp = .Store,
+			clearValue = {0.05, 0.05, 0.08, 1},
+		}
 		pass := wgpu.CommandEncoderBeginRenderPass(encoder, &{colorAttachmentCount = 1, colorAttachments = &color})
 		wgpu.RenderPassEncoderSetPipeline(pass, pipeline)
-		wgpu.RenderPassEncoderSetBindGroup(pass, 0, bind_group, 0, nil)
+		wgpu.RenderPassEncoderSetBindGroup(pass, 0, bind_group)
 		wgpu.RenderPassEncoderDraw(pass, 3, 1, 0, 0)
 		wgpu.RenderPassEncoderEnd(pass)
 		wgpu.RenderPassEncoderRelease(pass)
 
 		commands := wgpu.CommandEncoderFinish(encoder)
-		wgpu.QueueSubmit(a.queue, 1, &commands)
+		wgpu.QueueSubmit(a.queue, {commands})
 		shared.present(&a)
 
 		wgpu.CommandBufferRelease(commands)

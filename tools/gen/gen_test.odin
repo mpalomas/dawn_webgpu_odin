@@ -7,7 +7,7 @@ import "core:testing"
 
 HEADER_PATH :: #directory + "../../dawn/include/dawn/webgpu.h"
 VERSION_PATH :: #directory + "../../dawn/include/dawn/dawn_version.h"
-GENERATED_PATH :: #directory + "../../webgpu/webgpu_generated.odin"
+GENERATED_PATH :: #directory + "../../wgpu/wgpu_generated.odin"
 
 // The declarations most snippets need.
 PRELUDE :: `
@@ -196,7 +196,8 @@ WGPU_EXPORT void wgpuQueueWrite(WGPUQueue queue, size_t dataSize, WGPUFenceInfo 
 #endif
 `,
 		"foreign import lib {",
-		"\tQueueSubmit :: proc(queue: Queue, commandCount: uint, commands: [^]CommandBuffer) ---\n",
+		// Wrapped in wgpu.odin.
+		"\t@(link_name = \"wgpuQueueSubmit\")\n\tRawQueueSubmit :: proc(queue: Queue, commandCount: uint, commands: [^]CommandBuffer) ---\n",
 		"\tCreateQueue :: proc(/* NULLABLE */ info: ^FenceInfo = nil) -> Queue ---\n",
 		"\tQueueWrite :: proc(queue: Queue, dataSize: uint, dataLayout: ^FenceInfo, codeSize: uint, code: [^]u32) ---\n",
 		"\t@(link_name = \"wgpuFenceInfo\")\n\tFenceInfo_ :: proc(queue: Queue) ---\n",
@@ -289,5 +290,5 @@ test_generated_is_up_to_date :: proc(t: ^testing.T) {
 	if !testing.expectf(t, err == "", "generate failed: %s", err) {
 		return
 	}
-	testing.expect(t, out == string(generated), "webgpu/webgpu_generated.odin is stale: run tools/update_dawn.sh or tools/gen")
+	testing.expect(t, out == string(generated), "wgpu/wgpu_generated.odin is stale: run tools/update_dawn.sh or tools/gen")
 }

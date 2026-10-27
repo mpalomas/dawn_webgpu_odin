@@ -1,8 +1,8 @@
 // Creates a WebGPU surface for a GLFW window, on Wayland or X11.
-package webgpu_glfw_glue
+package wgpu_glfw_glue
 
 import "vendor:glfw"
-import wgpu "../webgpu"
+import wgpu ".."
 
 GetSurface :: proc(instance: wgpu.Instance, window: glfw.WindowHandle) -> wgpu.Surface {
 	switch glfw.GetPlatform() {

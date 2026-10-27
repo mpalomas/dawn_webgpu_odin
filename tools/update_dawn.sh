@@ -74,12 +74,12 @@ done
 
 cd "$REPO"
 "$ODIN" run tools/gen -out:tools/gen/gen.bin -- \
-    dawn/include/dawn/webgpu.h webgpu/webgpu_generated.odin dawn/include/dawn/dawn_version.h
+    dawn/include/dawn/webgpu.h wgpu/wgpu_generated.odin dawn/include/dawn/dawn_version.h
 if [[ -f "$LIB_DIR/libwebgpu_dawn.a" ]]; then
-    "$ODIN" check webgpu -no-entry-point
+    "$ODIN" check wgpu -no-entry-point
 fi
 if [[ -f "$LIB_DIR/libwebgpu_dawn.dylib" || -f "$LIB_DIR/libwebgpu_dawn.so" ]]; then
-    "$ODIN" check webgpu -no-entry-point -define:DAWN_SHARED=true
+    "$ODIN" check wgpu -no-entry-point -define:DAWN_SHARED=true
 fi
 
-echo "Updated to $(grep -E '^// Dawn version' webgpu/webgpu_generated.odin)"
+echo "Updated to $(grep -E '^// Dawn version' wgpu/wgpu_generated.odin)"

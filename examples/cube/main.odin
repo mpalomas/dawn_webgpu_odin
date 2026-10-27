@@ -6,7 +6,7 @@ import "core:math/linalg"
 import "core:os"
 import "vendor:glfw"
 import "../shared"
-import wgpu "../../webgpu"
+import "gpu:wgpu"
 
 SHADER :: `
 struct Uniforms {
@@ -108,13 +108,15 @@ perspective :: proc(fovy, aspect, near, far: f32) -> matrix[4, 4]f32 {
 }
 
 create_depth_view :: proc(a: ^shared.App) -> (wgpu.Texture, wgpu.TextureView) {
-	desc := wgpu.TEXTURE_DESCRIPTOR_INIT
-	desc.label = "depth"
-	desc.usage = {.RenderAttachment}
-	desc.dimension = ._2D
-	desc.size = {a.width, a.height, 1}
-	desc.format = DEPTH_FORMAT
-	texture := wgpu.DeviceCreateTexture(a.device, &desc)
+	texture := wgpu.DeviceCreateTexture(a.device, &{
+		label = "depth",
+		usage = {.RenderAttachment},
+		dimension = ._2D,
+		size = {a.width, a.height, 1},
+		format = DEPTH_FORMAT,
+		mipLevelCount = 1,
+		sampleCount = 1,
+	})
 	return texture, wgpu.TextureCreateView(texture)
 }
 
@@ -138,26 +140,29 @@ main :: proc() {
 	defer wgpu.BufferRelease(uniform_buffer)
 
 	// Checkerboard texture
-	texture_desc := wgpu.TEXTURE_DESCRIPTOR_INIT
-	texture_desc.label = "checkerboard"
-	texture_desc.usage = {.TextureBinding, .CopyDst}
-	texture_desc.dimension = ._2D
-	texture_desc.size = {TEXTURE_SIZE, TEXTURE_SIZE, 1}
-	texture_desc.format = .RGBA8Unorm
-	texture := wgpu.DeviceCreateTexture(a.device, &texture_desc)
+	texture := wgpu.DeviceCreateTexture(a.device, &{
+		label = "checkerboard",
+		usage = {.TextureBinding, .CopyDst},
+		dimension = ._2D,
+		size = {TEXTURE_SIZE, TEXTURE_SIZE, 1},
+		format = .RGBA8Unorm,
+		mipLevelCount = 1,
+		sampleCount = 1,
+	})
 	defer wgpu.TextureRelease(texture)
 	pixels := checkerboard()
-	destination := wgpu.TEXEL_COPY_TEXTURE_INFO_INIT
-	destination.texture = texture
+	destination := wgpu.TexelCopyTextureInfo{texture = texture}
 	data_layout := wgpu.TexelCopyBufferLayout{bytesPerRow = TEXTURE_SIZE * 4, rowsPerImage = TEXTURE_SIZE}
 	wgpu.QueueWriteTexture(a.queue, &destination, &pixels, size_of(pixels), &data_layout, &{TEXTURE_SIZE, TEXTURE_SIZE, 1})
 	texture_view := wgpu.TextureCreateView(texture)
 	defer wgpu.TextureViewRelease(texture_view)
 
-	sampler_desc := wgpu.SAMPLER_DESCRIPTOR_INIT
-	sampler_desc.magFilter = .Nearest
-	sampler_desc.minFilter = .Linear
-	sampler := wgpu.DeviceCreateSampler(a.device, &sampler_desc)
+	sampler := wgpu.DeviceCreateSampler(a.device, &{
+		magFilter = .Nearest,
+		minFilter = .Linear,
+		lodMaxClamp = 32,
+		maxAnisotropy = 1,
+	})
 	defer wgpu.SamplerRelease(sampler)
 
 	// Pipeline
@@ -175,30 +180,30 @@ main :: proc() {
 		attributeCount = len(attributes),
 		attributes = &attributes[0],
 	}}
-	targets := [?]wgpu.ColorTargetState{wgpu.COLOR_TARGET_STATE_INIT}
-	targets[0].format = a.format
-	fragment := wgpu.FRAGMENT_STATE_INIT
-	fragment.module = module
-	fragment.entryPoint = "fs_main"
-	fragment.targetCount = len(targets)
-	fragment.targets = &targets[0]
-	depth_stencil := wgpu.DEPTH_STENCIL_STATE_INIT
-	depth_stencil.format = DEPTH_FORMAT
-	depth_stencil.depthWriteEnabled = .True
-	depth_stencil.depthCompare = .Less
-
-	pipeline_desc := wgpu.RENDER_PIPELINE_DESCRIPTOR_INIT
-	pipeline_desc.label = "cube pipeline"
-	pipeline_desc.vertex.module = module
-	pipeline_desc.vertex.entryPoint = "vs_main"
-	pipeline_desc.vertex.bufferCount = len(buffers)
-	pipeline_desc.vertex.buffers = &buffers[0]
-	pipeline_desc.primitive.topology = .TriangleList
-	pipeline_desc.primitive.frontFace = .CCW
-	pipeline_desc.primitive.cullMode = .Back
-	pipeline_desc.depthStencil = &depth_stencil
-	pipeline_desc.fragment = &fragment
-	pipeline := wgpu.DeviceCreateRenderPipeline(a.device, &pipeline_desc)
+	targets := [?]wgpu.ColorTargetState{{format = a.format, writeMask = wgpu.ColorWriteMaskFlags_All}}
+	fragment := wgpu.FragmentState{
+		module = module,
+		entryPoint = "fs_main",
+		targetCount = len(targets),
+		targets = &targets[0],
+	}
+	depth_stencil := wgpu.DepthStencilState{
+		format = DEPTH_FORMAT,
+		depthWriteEnabled = .True,
+		depthCompare = .Less,
+		stencilFront = {compare = .Always},
+		stencilBack = {compare = .Always},
+		stencilReadMask = 0xFFFFFFFF,
+		stencilWriteMask = 0xFFFFFFFF,
+	}
+	pipeline := wgpu.DeviceCreateRenderPipeline(a.device, &{
+		label = "cube pipeline",
+		vertex = {module = module, entryPoint = "vs_main", bufferCount = len(buffers), buffers = &buffers[0]},
+		primitive = {topology = .TriangleList, frontFace = .CCW, cullMode = .Back},
+		depthStencil = &depth_stencil,
+		multisample = {count = 1, mask = 0xFFFFFFFF},
+		fragment = &fragment,
+	})
 	defer wgpu.RenderPipelineRelease(pipeline)
 
 	layout := wgpu.RenderPipelineGetBindGroupLayout(pipeline, 0)
@@ -255,23 +260,26 @@ main :: proc() {
 		view := wgpu.TextureCreateView(frame_texture)
 		encoder := wgpu.DeviceCreateCommandEncoder(a.device)
 
-		color := wgpu.RENDER_PASS_COLOR_ATTACHMENT_INIT
-		color.view = view
-		color.loadOp = .Clear
-		color.storeOp = .Store
-		color.clearValue = {0.05, 0.05, 0.08, 1}
-		depth := wgpu.RENDER_PASS_DEPTH_STENCIL_ATTACHMENT_INIT
-		depth.view = depth_view
-		depth.depthLoadOp = .Clear
-		depth.depthStoreOp = .Discard
-		depth.depthClearValue = 1
+		color := wgpu.RenderPassColorAttachment{
+			view = view,
+			depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
+			loadOp = .Clear,
+			storeOp = .Store,
+			clearValue = {0.05, 0.05, 0.08, 1},
+		}
+		depth := wgpu.RenderPassDepthStencilAttachment{
+			view = depth_view,
+			depthLoadOp = .Clear,
+			depthStoreOp = .Discard,
+			depthClearValue = 1,
+		}
 		pass := wgpu.CommandEncoderBeginRenderPass(encoder, &{
 			colorAttachmentCount = 1,
 			colorAttachments = &color,
 			depthStencilAttachment = &depth,
 		})
 		wgpu.RenderPassEncoderSetPipeline(pass, pipeline)
-		wgpu.RenderPassEncoderSetBindGroup(pass, 0, bind_group, 0, nil)
+		wgpu.RenderPassEncoderSetBindGroup(pass, 0, bind_group)
 		wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, vertex_buffer, 0, size_of(vertices))
 		wgpu.RenderPassEncoderSetIndexBuffer(pass, index_buffer, .Uint16, 0, size_of(indices))
 		wgpu.RenderPassEncoderDrawIndexed(pass, len(indices), 1, 0, 0, 0)
@@ -279,7 +287,7 @@ main :: proc() {
 		wgpu.RenderPassEncoderRelease(pass)
 
 		commands := wgpu.CommandEncoderFinish(encoder)
-		wgpu.QueueSubmit(a.queue, 1, &commands)
+		wgpu.QueueSubmit(a.queue, {commands})
 		shared.present(&a)
 
 		wgpu.CommandBufferRelease(commands)

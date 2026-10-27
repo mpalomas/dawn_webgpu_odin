@@ -38,7 +38,7 @@ C_PRIMITIVES :: [?][2]string{
 
 // The shared library carries its own dependencies. The static one needs the C++ runtime and, on macOS,
 // the frameworks of the Metal backend. On Linux, Dawn loads Vulkan at runtime with dlopen.
-// DAWN_SHARED, DAWN_LIB and DAWN_STATIC_CXX are in webgpu.odin.
+// DAWN_SHARED, DAWN_LIB and DAWN_STATIC_CXX are in wgpu.odin.
 FOREIGN_IMPORT :: `when DAWN_SHARED {
 	foreign import lib {
 		DAWN_LIB,
@@ -85,6 +85,28 @@ C_CONSTANT_VALUES :: [?][2]string{
 	{"NAN", "f32(0h7FC0_0000)"},
 }
 
+// Functions emitted as `Raw<Name>`, keeping their C symbol, because wgpu.odin wraps them with Odin-friendly
+// signatures (slices, multiple return values). The same set as vendor:wgpu, so code calling either the
+// wrappers or the Raw procs compiles against both.
+RAW_FUNCTIONS :: [?]string{
+	"GetInstanceLimits",
+	"AdapterGetFeatures",
+	"AdapterGetInfo",
+	"AdapterGetLimits",
+	"BufferGetConstMappedRange",
+	"BufferGetMappedRange",
+	"ComputePassEncoderSetBindGroup",
+	"DeviceGetAdapterInfo",
+	"DeviceGetFeatures",
+	"DeviceGetLimits",
+	"QueueSubmit",
+	"RenderBundleEncoderSetBindGroup",
+	"RenderPassEncoderExecuteBundles",
+	"RenderPassEncoderSetBindGroup",
+	"SurfaceGetCapabilities",
+	"SurfaceGetCurrentTexture",
+}
+
 // Generates the Odin bindings for a Dawn `webgpu.h`. `source` and `version` only go into the file header.
 generate :: proc(header_src, source, version: string) -> (out: string, err: string) {
 	ir, parse_err := parse(header_src)
@@ -102,7 +124,7 @@ generate :: proc(header_src, source, version: string) -> (out: string, err: stri
 	if version != "" {
 		fmt.sbprintf(&b, "// Dawn version: %s\n", version)
 	}
-	strings.write_string(&b, "package webgpu\n\n")
+	strings.write_string(&b, "package wgpu\n\n")
 	if e.uses_c {
 		strings.write_string(&b, "import \"core:c\"\n\n")
 	}
@@ -546,8 +568,18 @@ emit_inits :: proc(e: ^Emitter) {
 }
 
 @(private = "file")
+is_raw_function :: proc(name: string) -> bool {
+	for raw in RAW_FUNCTIONS {
+		if name == raw {
+			return true
+		}
+	}
+	return false
+}
+
+@(private = "file")
 emit_functions :: proc(e: ^Emitter) {
-	// Imports are file-scoped, so the import goes next to the foreign block. DAWN_LIB is in webgpu.odin.
+	// Imports are file-scoped, so the import goes next to the foreign block. DAWN_LIB is in wgpu.odin.
 	strings.write_string(&e.b, FOREIGN_IMPORT)
 	strings.write_string(&e.b, "@(default_calling_convention = \"c\", link_prefix = \"wgpu\")\nforeign lib {\n")
 	for f in e.ir.functions {
@@ -556,7 +588,9 @@ emit_functions :: proc(e: ^Emitter) {
 			continue
 		}
 		name := f.name[len("wgpu"):]
-		if e.ir.kinds[fmt.aprintf("WGPU%s", name)] != .None {
+		if is_raw_function(name) {
+			fmt.sbprintf(&e.b, "\t@(link_name = \"%s\")\n\tRaw%s :: proc", f.name, name)
+		} else if e.ir.kinds[fmt.aprintf("WGPU%s", name)] != .None {
 			// The function has the name of a type, e.g. wgpuSharedFenceExportInfo.
 			fmt.sbprintf(&e.b, "\t@(link_name = \"%s\")\n\t%s_ :: proc", f.name, name)
 		} else {

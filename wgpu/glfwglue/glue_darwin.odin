@@ -1,9 +1,9 @@
 // Creates a WebGPU surface for a GLFW window, backed by a CAMetalLayer.
-package webgpu_glfw_glue
+package wgpu_glfw_glue
 
 import "vendor:glfw"
 import CA "vendor:darwin/QuartzCore"
-import wgpu "../webgpu"
+import wgpu ".."
 
 GetSurface :: proc(instance: wgpu.Instance, window: glfw.WindowHandle) -> wgpu.Surface {
 	ns_window := glfw.GetCocoaWindow(window)
