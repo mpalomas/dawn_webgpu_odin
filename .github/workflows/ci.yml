@@ -1,0 +1,67 @@
+# Checks the generator, the generated bindings and the examples, without Dawn: the examples are only
+# type-checked, against this repo's bindings and vendor:wgpu, for Linux and macOS.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-odin
+
+      # Also checks that wgpu/wgpu_generated.odin matches dawn/include/dawn/webgpu.h.
+      - name: Test the generator
+        run: odin test tools/gen -out:gen_test.bin
+
+      # Both packages refuse to compile without their library, and type-checking does not link: empty files
+      # stand in for them.
+      - name: Create placeholder libraries
+        run: |
+          mkdir -p lib/linux-x86_64 lib/macos-arm64
+          touch lib/linux-x86_64/libwebgpu_dawn.a lib/linux-x86_64/libwebgpu_dawn.so
+          touch lib/macos-arm64/libwebgpu_dawn.a lib/macos-arm64/libwebgpu_dawn.dylib
+          vendor_lib="$(odin root)/vendor/wgpu/lib"
+          for dir in wgpu-linux-x86_64-release wgpu-macos-aarch64-release; do
+            mkdir -p "$vendor_lib/$dir/lib"
+            touch "$vendor_lib/$dir/lib/libwgpu_native.a"
+          done
+
+      - name: Type-check the package and the examples
+        run: |
+          vendor="$(odin root)/vendor"
+          for target in linux_amd64 darwin_arm64; do
+            echo "::group::$target"
+            odin check wgpu -no-entry-point -target:$target
+            odin check wgpu -no-entry-point -target:$target -define:DAWN_SHARED=true
+            for example in triangle cube; do
+              odin check examples/$example -target:$target -collection:gpu=.
+              odin check examples/$example -target:$target -collection:gpu="$vendor" -define:DAWN=false
+            done
+            echo "::endgroup::"
+          done
+
+      - name: Check the scripts
+        run: |
+          shellcheck --severity=warning tools/*.sh
+          python3 -m py_compile tools/compare_vendor_wgpu.py

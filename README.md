@@ -17,13 +17,27 @@ layout, names and wrappers, so code using the core API builds against either
 | `tools/gen/` | The generator, `webgpu.h` → Odin, with its tests. |
 | `tools/build-{vulkan,metal}-min.sh` | Build Dawn for Linux or macOS. Run from the Dawn checkout's root. |
 | `tools/update_dawn.sh` | Imports Dawn installs and regenerates the bindings. |
+| `tools/fetch_dawn_libs.sh` | Downloads the prebuilt libraries matching the bindings. |
 | `tools/dawn_for_chrome.sh` | Finds the Dawn commit of a Chrome release, and checks it out. |
 | `tools/compare_vendor_wgpu.py` | Lists the differences with `vendor:wgpu`. |
 | `dawn/include/dawn/` | The Dawn headers the bindings were generated from. |
-| `lib/<os>-<arch>/` | The Dawn libraries, copied by `update_dawn.sh`. Not committed. |
+| `dawn/release.env` | The release whose libraries match the bindings. |
+| `lib/<os>-<arch>/` | The Dawn libraries, from `fetch_dawn_libs.sh` or `update_dawn.sh`. Not committed. |
+| `.github/` | CI, and the workflows that build and publish Dawn ([GitHub Actions](#github-actions)). |
 | `examples/` | `triangle` and `cube`, with their common setup in `shared/`. |
 
 ## Setup
+
+The quick way: download the prebuilt libraries of the release pinned in `dawn/release.env`, built by
+[GitHub Actions](#github-actions) for Linux x86_64 (glibc 2.39+) and macOS arm64 (13+):
+
+```sh
+tools/fetch_dawn_libs.sh                 # this machine's platform, or e.g. linux-x86_64 macos-arm64
+```
+
+It uses `gh` if it is installed and logged in, which a private repository requires, else curl.
+
+### Building Dawn
 
 Dawn has no releases: Chrome's are the reference. `dawn_for_chrome.sh` finds the Dawn commit of a Chrome
 version, milestone or channel through Gitiles, and with `--fetch` makes a shallow checkout of it (`--deps`
@@ -38,21 +52,16 @@ The build scripts make size-optimized, single-backend, monolithic Dawn builds. C
 checkout's root and run them from there:
 
 ```sh
-# Linux (static)
-cp tools/build-vulkan-min.sh ~/dev/c++/dawn/ && ~/dev/c++/dawn/build-vulkan-min.sh all
-tools/update_dawn.sh ~/dev/c++/dawn/build-vulkan-min/install
-
-# macOS (static and/or shared)
-cp tools/build-metal-min.sh ~/dev/c++/dawn/
-~/dev/c++/dawn/build-metal-min.sh all static
-~/dev/c++/dawn/build-metal-min.sh all shared
-tools/update_dawn.sh ~/dev/c++/dawn/build-metal-min-static/install ~/dev/c++/dawn/build-metal-min-shared/install
+cp tools/build-metal-min.sh ~/dev/c++/dawn/      # macOS; build-vulkan-min.sh on Linux
+~/dev/c++/dawn/build-metal-min.sh all static     # and/or: all shared
+tools/update_dawn.sh                             # imports ~/dev/c++/dawn/build-*-min-{static,shared}/install
 ```
 
 `update_dawn.sh` copies the libraries to `lib/<os>-<arch>/` and the headers to `dawn/include/dawn/`,
 regenerates the bindings and checks them. Rerun it after updating Dawn and commit the header and generated
-file. `webgpu.h` has no platform-specific declarations, so one generated file serves every platform built
-from the same Dawn version; the script refuses installs whose `webgpu.h` differ.
+file (`dawn/release.env` then no longer matches, until a release is built for that Dawn). `webgpu.h` has
+no platform-specific declarations, so one generated file serves every platform built from the same Dawn
+version; the script refuses installs whose `webgpu.h` differ.
 
 ## Examples
 
@@ -148,6 +157,20 @@ Names, struct layouts, enum values, callbacks and wrappers are the same. To buil
 
 `tools/compare_vendor_wgpu.py [--vendor DIR]` lists the differences, worth rerunning after a Dawn or Odin
 update.
+
+## GitHub Actions
+
+| Workflow | Runs | Does |
+|---|---|---|
+| `ci.yml` | On pushes to `master` and pull requests | Tests the generator, checks that the generated file matches the header, type-checks the package and the examples (Dawn and `vendor:wgpu`, Linux and macOS), lints the scripts. |
+| `build-dawn.yml` | By hand (Actions > Build Dawn > Run workflow), with a Chrome version, milestone or channel | Builds Dawn static and shared on Linux and macOS, regenerates the bindings, builds the examples against the libraries. With `publish`: creates the release `dawn-chrome-<version>`, and opens a pull request that commits the bindings and `dawn/release.env`. |
+| `update-dawn.yml` | Mondays, or by hand | Runs `build-dawn.yml` when Chrome stable uses a new Dawn commit, unless its release exists already. |
+
+The release holds the libraries; the pull request commits the matching bindings, so merging it is what
+updates the repo. One-time setup: enable Settings > Actions > General > "Allow GitHub Actions to create and
+approve pull requests". Pull requests opened by Actions don't trigger CI: close and reopen them to run it.
+A Dawn build takes about 15 minutes per job, cached per Dawn commit; on a private repository, macOS minutes
+count 10 times against the free quota.
 
 ## Tests
 

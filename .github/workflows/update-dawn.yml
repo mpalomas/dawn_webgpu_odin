@@ -1,0 +1,62 @@
+# Weekly: when Chrome stable (Linux) uses another Dawn commit than the one pinned in dawn/release.env, runs
+# build-dawn.yml for it, which publishes a release and opens a pull request. Skipped while the release
+# exists already, i.e. while its pull request waits for a merge.
+name: Update Dawn
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      chrome: ${{ steps.check.outputs.chrome }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Compare Chrome stable's Dawn with the pinned one
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          stable="$(tools/dawn_for_chrome.sh --env --platform Linux stable)"
+          echo "$stable"
+          version="$(sed -n 's/^CHROME_VERSION=//p' <<<"$stable")"
+          commit="$(sed -n 's/^DAWN_COMMIT=//p' <<<"$stable")"
+          pinned=""
+          if [[ -f dawn/release.env ]]; then
+            pinned="$(sed -n 's/^DAWN_COMMIT=//p' dawn/release.env)"
+          fi
+          echo "Pinned Dawn commit: ${pinned:-none}"
+          if [[ "$commit" == "$pinned" ]]; then
+            echo "Up to date"
+            exit 0
+          fi
+          if gh release view "dawn-chrome-$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "The release dawn-chrome-$version exists already: merge its pull request"
+            exit 0
+          fi
+          echo "chrome=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    if: needs.check.outputs.chrome != ''
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: ./.github/workflows/build-dawn.yml
+    with:
+      chrome: ${{ needs.check.outputs.chrome }}
+      publish: true

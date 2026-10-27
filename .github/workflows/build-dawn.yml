@@ -1,0 +1,287 @@
+# Builds Dawn at the commit of a Chrome release, static and shared, for Linux and macOS, regenerates the
+# bindings and builds the examples against the libraries. With `publish`, then creates the release
+# dawn-chrome-<version> with the libraries, and opens a pull request that commits the bindings and pins the
+# release in dawn/release.env (read by tools/fetch_dawn_libs.sh).
+#
+# Opening the pull request requires Settings > Actions > General > "Allow GitHub Actions to create and
+# approve pull requests".
+name: Build Dawn
+
+on:
+  workflow_dispatch:
+    inputs:
+      chrome:
+        description: Chrome version (156.0.8078.48), milestone (156) or channel (stable, beta, dev, canary)
+        required: true
+        default: stable
+      publish:
+        description: Publish a release and open a pull request with the bindings
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      chrome:
+        type: string
+        required: true
+      publish:
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      chrome_version: ${{ steps.resolve.outputs.CHROME_VERSION }}
+      dawn_commit: ${{ steps.resolve.outputs.DAWN_COMMIT }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      # Milestones and channels resolve to the Linux release, which every job then uses.
+      - name: Find the Dawn commit
+        id: resolve
+        env:
+          CHROME: ${{ inputs.chrome }}
+        run: tools/dawn_for_chrome.sh --env --platform Linux "$CHROME" | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux-x86_64, macos-arm64]
+        linkage: [static, shared]
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+            script: build-vulkan-min.sh
+          - platform: macos-arm64
+            runner: macos-latest
+            script: build-metal-min.sh
+    name: build (${{ matrix.platform }}, ${{ matrix.linkage }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      CHROME_VERSION: ${{ needs.resolve.outputs.chrome_version }}
+      LINKAGE: ${{ matrix.linkage }}
+      SCRIPT: ${{ matrix.script }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      # A build depends on the Dawn commit, the build script, and the build environment set below (bump v1
+      # when changing it).
+      - name: Restore the Dawn build
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: dawn-install
+          key: dawn-v1-${{ matrix.platform }}-${{ matrix.linkage }}-${{ needs.resolve.outputs.dawn_commit }}-${{ hashFiles(format('tools/{0}', matrix.script)) }}
+
+      - name: Install build tools
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            sudo apt-get update
+            sudo apt-get install -y ninja-build g++-14
+          else
+            command -v ninja || brew install ninja
+          fi
+          cmake --version
+
+      - name: Fetch Dawn and its dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: tools/dawn_for_chrome.sh --fetch dawn --deps "$CHROME_VERSION"
+
+      # Linux: the runner's GCC 14 (Dawn needs GCC 12+ or Clang 19+), so the libraries need glibc 2.39+ and
+      # libstdc++ 14+. macOS: macOS 13+, as Dawn's own CI.
+      - name: Build Dawn
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            export CC=gcc-14 CXX=g++-14
+          else
+            export MACOSX_DEPLOYMENT_TARGET=13.0
+          fi
+          cp "tools/$SCRIPT" dawn/
+          BUILD_DIR="$PWD/dawn-build" INSTALL_DIR="$PWD/dawn-install" bash "dawn/$SCRIPT" all "$LINKAGE"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dawn-${{ matrix.platform }}-${{ matrix.linkage }}
+          path: dawn-install
+          if-no-files-found: error
+
+  verify:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+            flags: -extra-linker-flags:-Wl,--gc-sections
+          - platform: macos-arm64
+            runner: macos-latest
+            flags: -extra-linker-flags:-Wl,-dead_strip -minimum-os-version:13.0
+    name: verify (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      PLATFORM: ${{ matrix.platform }}
+      FLAGS: ${{ matrix.flags }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-odin
+
+      # vendor:glfw links the system GLFW on Linux, and ships it for macOS. Odin links with clang, which
+      # takes libstdc++ from the newest GCC installed: g++-14 makes sure it is complete.
+      - name: Install GLFW and libstdc++
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglfw3-dev g++-14
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: dawn-${{ matrix.platform }}-*
+          path: ${{ runner.temp }}/installs
+
+      - name: Import the libraries and generate the bindings
+        run: tools/update_dawn.sh "$RUNNER_TEMP/installs/dawn-$PLATFORM-static" "$RUNNER_TEMP/installs/dawn-$PLATFORM-shared"
+
+      # Built only: the runners have no GPU to run them.
+      - name: Build the examples
+        run: |
+          for example in triangle cube; do
+            # FLAGS holds several flags.
+            # shellcheck disable=SC2086
+            odin build examples/$example -collection:gpu=. $FLAGS -out:$example-static.bin
+            # shellcheck disable=SC2086
+            odin build examples/$example -collection:gpu=. $FLAGS -define:DAWN_SHARED=true -out:$example-shared.bin
+          done
+          ls -l ./*.bin
+
+      - name: Package the libraries
+        run: |
+          # No AppleDouble files from macOS tar.
+          COPYFILE_DISABLE=1 tar -czf "dawn-$PLATFORM.tar.gz" lib/"$PLATFORM"/libwebgpu_dawn.*
+          tar -tzvf "dawn-$PLATFORM.tar.gz"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dawn-${{ matrix.platform }}.tar.gz
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bindings-${{ matrix.platform }}
+          path: |
+            dawn/include/dawn
+            wgpu/wgpu_generated.odin
+          if-no-files-found: error
+
+  publish:
+    needs: [resolve, verify]
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      CHROME_VERSION: ${{ needs.resolve.outputs.chrome_version }}
+      DAWN_COMMIT: ${{ needs.resolve.outputs.dawn_commit }}
+      TAG: dawn-chrome-${{ needs.resolve.outputs.chrome_version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # With the token persisted, to push the pull request's branch.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: bindings-*
+          path: ${{ runner.temp }}/bindings
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          path: ${{ runner.temp }}/assets
+          merge-multiple: true
+
+      # webgpu.h has no platform-specific declarations, so both platforms must generate the same bindings.
+      - name: Check that the platforms agree
+        run: diff -r "$RUNNER_TEMP/bindings/bindings-linux-x86_64" "$RUNNER_TEMP/bindings/bindings-macos-arm64"
+
+      - name: Create the release
+        run: |
+          assets="$RUNNER_TEMP/assets"
+          cp "$RUNNER_TEMP/bindings/bindings-linux-x86_64/dawn/include/dawn/webgpu.h" "$assets/"
+          (cd "$assets" && sha256sum dawn-*.tar.gz webgpu.h > SHA256SUMS && cat SHA256SUMS)
+          notes="Dawn built at the commit of Chrome $CHROME_VERSION: https://dawn.googlesource.com/dawn/+/$DAWN_COMMIT
+
+          Static and shared libraries for Linux x86_64 (built on Ubuntu 24.04 with GCC 14) and macOS arm64 (macOS 13+). Download them with \`tools/fetch_dawn_libs.sh\`.
+
+          Built by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$assets"/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" "$assets"/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Dawn for Chrome $CHROME_VERSION" --notes "$notes"
+          fi
+
+      - name: Open a pull request with the bindings
+        run: |
+          generated="$RUNNER_TEMP/bindings/bindings-linux-x86_64"
+          rm -rf dawn/include/dawn
+          cp -R "$generated/dawn/include/dawn" dawn/include/dawn
+          cp "$generated/wgpu/wgpu_generated.odin" wgpu/
+          cat > dawn/release.env <<EOF
+          # The release whose libraries match these bindings, downloaded by tools/fetch_dawn_libs.sh.
+          # Written by .github/workflows/build-dawn.yml.
+          CHROME_VERSION=$CHROME_VERSION
+          DAWN_COMMIT=$DAWN_COMMIT
+          RELEASE_TAG=$TAG
+          EOF
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "The bindings and the pin are up to date"
+            exit 0
+          fi
+          git status --short
+
+          branch="dawn/chrome-$CHROME_VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add -A dawn wgpu
+          git commit -m "Update Dawn to Chrome $CHROME_VERSION" -m "Dawn commit $DAWN_COMMIT, release $TAG."
+          git push --force origin "$branch"
+
+          if [[ -n "$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq '.[].number')" ]]; then
+            echo "The pull request for $branch exists already, its branch is updated"
+            exit 0
+          fi
+          body="Updates the bindings to Dawn $DAWN_COMMIT, the commit of Chrome $CHROME_VERSION, and pins the release [$TAG]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG).
+
+          Generated by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID, which built the examples against the libraries on Linux and macOS.
+
+          Pull requests opened by GitHub Actions do not trigger CI: close and reopen this one to run it."
+          gh pr create --repo "$GITHUB_REPOSITORY" --base "$GITHUB_REF_NAME" --head "$branch" \
+            --title "Update Dawn to Chrome $CHROME_VERSION" --body "$body" || {
+            echo "::error::Cannot open the pull request. Enable Settings > Actions > General > 'Allow GitHub Actions to create and approve pull requests', or open it by hand from $branch."
+            exit 1
+          }

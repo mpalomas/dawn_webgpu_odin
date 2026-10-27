@@ -1,22 +1,34 @@
 #!/usr/bin/env bash
-# Minimal, size-oriented Dawn build: Vulkan backend only, static monolithic lib.
+# Minimal, size-oriented Dawn build for Linux: Vulkan backend only, monolithic lib, static or shared.
 #
-# Usage: ./build-vulkan-min.sh <command>
+# Usage: ./build-vulkan-min.sh <command> [static|shared]
 #   configure  Fresh configure (discards the existing CMake cache)
 #   build      Build Release, optimized for size
 #   install    Install into $INSTALL_DIR
 #   all        configure + build + install
 #   clean      Delete the build directory
+# The second argument picks libwebgpu_dawn.a (static, the default) or libwebgpu_dawn.so (shared).
+# Each has its own build directory, so both can be built side by side.
 #
 # Environment overrides:
-#   BUILD_DIR    (default: <dawn>/build-vulkan-min)
+#   BUILD_DIR    (default: <dawn>/build-vulkan-min-<static|shared>)
 #   INSTALL_DIR  (default: $BUILD_DIR/install)
 #   JOBS         (default: number of CPUs)
+#   CC, CXX      (default: clang, clang++; Dawn needs Clang 19+ or GCC 12+)
 
 set -euo pipefail
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_DIR="${BUILD_DIR:-$SRC_DIR/build-vulkan-min}"
+LINKAGE="${2:-static}"
+case "$LINKAGE" in
+    static) MONOLITHIC=STATIC ;;
+    shared) MONOLITHIC=SHARED ;;
+    *)
+        echo "error: expected static or shared, got '$LINKAGE'" >&2
+        exit 1
+        ;;
+esac
+BUILD_DIR="${BUILD_DIR:-$SRC_DIR/build-vulkan-min-$LINKAGE}"
 INSTALL_DIR="${INSTALL_DIR:-$BUILD_DIR/install}"
 JOBS="${JOBS:-$(nproc)}"
 
@@ -24,7 +36,8 @@ JOBS="${JOBS:-$(nproc)}"
 # as a debug build, which enables its asserts and error injection.
 RELEASE_FLAGS="-Os -DNDEBUG"
 
-# Let the linker of the final app drop unused functions with -Wl,--gc-sections.
+# Let the linker drop unused functions with -Wl,--gc-sections: the final app's linker for the static
+# library, Dawn's link for the shared one.
 SIZE_FLAGS="-ffunction-sections -fdata-sections"
 
 configure() {
@@ -32,13 +45,14 @@ configure() {
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_C_FLAGS_RELEASE="$RELEASE_FLAGS" \
         -DCMAKE_CXX_FLAGS_RELEASE="$RELEASE_FLAGS" \
-        -DCMAKE_C_COMPILER=clang \
-        -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_C_COMPILER="${CC:-clang}" \
+        -DCMAKE_CXX_COMPILER="${CXX:-clang++}" \
         -DCMAKE_C_FLAGS="$SIZE_FLAGS" \
         -DCMAKE_CXX_FLAGS="$SIZE_FLAGS" \
+        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--gc-sections" \
         -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
         -DBUILD_SHARED_LIBS=OFF \
-        -DDAWN_BUILD_MONOLITHIC_LIBRARY=STATIC \
+        -DDAWN_BUILD_MONOLITHIC_LIBRARY="$MONOLITHIC" \
         -DDAWN_ENABLE_INSTALL=ON \
         -DDAWN_FETCH_DEPENDENCIES=OFF \
         \
@@ -94,7 +108,7 @@ build() {
 
 install() {
     cmake --install "$BUILD_DIR" --config Release
-    ls -lh "$INSTALL_DIR"/lib/*.a
+    ls -lh "$INSTALL_DIR"/lib/libwebgpu_dawn.*
 }
 
 case "${1:-}" in
@@ -104,7 +118,7 @@ case "${1:-}" in
     all)       configure; build; install ;;
     clean)     rm -rf "$BUILD_DIR" ;;
     *)
-        echo "Usage: $0 {configure|build|install|all|clean}" >&2
+        echo "Usage: $0 {configure|build|install|all|clean} [static|shared]" >&2
         exit 1
         ;;
 esac

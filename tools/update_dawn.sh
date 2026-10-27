@@ -4,7 +4,8 @@
 # Usage: tools/update_dawn.sh [DAWN_INSTALL_DIR...]
 #   Pass several installs to import both a static and a shared build, e.g.
 #     tools/update_dawn.sh ~/dev/c++/dawn/build-metal-min-static/install ~/dev/c++/dawn/build-metal-min-shared/install
-#   Defaults to the installs of tools/build-vulkan-min.sh (Linux) or tools/build-metal-min.sh (macOS).
+#   Defaults to the installs of tools/build-vulkan-min.sh (Linux) or tools/build-metal-min.sh (macOS) that
+#   exist, static and shared, in ~/dev/c++/dawn.
 #
 # Copies include/dawn/{webgpu.h,dawn_version.h} to dawn/include/dawn/ (committed; older Dawns, such as
 # Chrome release branches before M158, install no dawn_version.h), the libraries found in
@@ -20,7 +21,7 @@ ODIN="${ODIN:-$(command -v odin || echo "$HOME/dev/odin/Odin/odin")}"
 case "$(uname -s)" in
     Linux)
         OS=linux
-        DEFAULT_INSTALLS=("$HOME/dev/c++/dawn/build-vulkan-min/install")
+        DEFAULT_INSTALLS=("$HOME/dev/c++/dawn/build-vulkan-min-static/install" "$HOME/dev/c++/dawn/build-vulkan-min-shared/install")
         ;;
     Darwin)
         OS=macos
@@ -38,7 +39,14 @@ LIB_DIR="$REPO/lib/$OS-$ARCH"
 if [[ $# -gt 0 ]]; then
     INSTALLS=("$@")
 else
-    INSTALLS=("${DEFAULT_INSTALLS[@]}")
+    INSTALLS=()
+    for install in "${DEFAULT_INSTALLS[@]}"; do
+        [[ ! -d "$install" ]] || INSTALLS+=("$install")
+    done
+    if [[ ${#INSTALLS[@]} == 0 ]]; then
+        echo "error: no Dawn install found in ${DEFAULT_INSTALLS[*]}, pass the install directories" >&2
+        exit 1
+    fi
 fi
 
 LIBS=()
