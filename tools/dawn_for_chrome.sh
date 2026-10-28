@@ -13,13 +13,15 @@
 #                   needs python3), so that CMake can build with DAWN_FETCH_DEPENDENCIES=OFF
 #   --env           Print KEY=VALUE lines only, e.g. to append to $GITHUB_OUTPUT or $GITHUB_ENV
 #
-# The commit is `dawn_revision` in Chromium's DEPS at the version's tag. Chromium's release branch BBBB
+# The commit comes from chromiumdash, else from `dawn_revision` in Chromium's DEPS at the version's tag
+# (which Gitiles can be slow to serve, up to 504 errors). Chromium's release branch BBBB
 # (the version's third number) has a Dawn branch chromium/BBBB, where later fixes for the milestone are
 # cherry-picked, so the script also reports how far the commit is from that branch's tip.
 #
 # --env keys: CHROME_VERSION, DAWN_COMMIT, DAWN_COMMIT_DATE, DAWN_COMMIT_TITLE, DAWN_BRANCH, DAWN_BRANCH_TIP,
 # DAWN_BRANCH_AHEAD (commits on the branch after DAWN_COMMIT). The DAWN_BRANCH* values are empty when the
-# branch does not exist (canary and dev builds from main).
+# branch does not exist (canary and dev builds from main). The commit details and the branch are looked up
+# on a best-effort basis: they are empty, with a warning, when Gitiles cannot be reached.
 
 set -euo pipefail
 # A CDPATH would make `cd` look up relative directories elsewhere.
@@ -185,31 +187,54 @@ case "$CHROME" in
 esac
 [[ -n "$VERSION" ]] || die "no $PLATFORM release found for '$CHROME'"
 
-# DEPS at the version's tag, base64-encoded by ?format=TEXT.
-DEPS_FILE="$(fetch "$CHROMIUM_GITILES/+/refs/tags/$VERSION/DEPS?format=TEXT" | base64 --decode)" ||
-    die "cannot read Chromium's DEPS at tag $VERSION (see curl's error: 404 if there is no such tag)"
-COMMIT="$(sed -n "s/^ *'dawn_revision': *'\([0-9a-f]\{40\}\)'.*/\1/p" <<<"$DEPS_FILE")"
-[[ -n "$COMMIT" ]] || die "no dawn_revision in DEPS at $VERSION"
+warn() {
+    echo "warning: $*" >&2
+}
+
+# The Dawn commit, from chromiumdash: {"hashes": {"dawn": "<sha>", ...}, ...}, or a 404.
+COMMIT="$(fetch "$CHROMIUMDASH/fetch_version?version=$VERSION" 2>/dev/null |
+    grep -o '"dawn":"[0-9a-f]\{40\}"' | cut -d '"' -f 4 || true)"
+if [[ -z "$COMMIT" ]]; then
+    # Else from DEPS at the version's tag, base64-encoded by ?format=TEXT.
+    DEPS_FILE="$(fetch "$CHROMIUM_GITILES/+/refs/tags/$VERSION/DEPS?format=TEXT" | base64 --decode)" ||
+        die "no Dawn commit for Chrome $VERSION: chromiumdash does not list it, and Chromium's DEPS at tag $VERSION cannot be read (see curl's error: 404 if there is no such tag)"
+    COMMIT="$(sed -n "s/^ *'dawn_revision': *'\([0-9a-f]\{40\}\)'.*/\1/p" <<<"$DEPS_FILE")"
+    [[ -n "$COMMIT" ]] || die "no dawn_revision in DEPS at $VERSION"
+fi
 
 # Commit date and title. The JSON is one key per line; `time` follows `committer`.
-COMMIT_JSON="$(fetch_json "$DAWN_GITILES/+/$COMMIT?format=JSON")"
-COMMIT_DATE="$(awk '/"committer": \{/ {c = 1} c && /"time":/ {sub(/.*"time": "/, ""); sub(/".*/, ""); print; exit}' <<<"$COMMIT_JSON")"
-COMMIT_TITLE="$(sed -n 's/^ *"message": "//p' <<<"$COMMIT_JSON" | sed 's/\\n.*//; s/\\"/"/g' | head -n 1)"
+COMMIT_DATE=""
+COMMIT_TITLE=""
+if COMMIT_JSON="$(fetch_json "$DAWN_GITILES/+/$COMMIT?format=JSON")"; then
+    COMMIT_DATE="$(awk '/"committer": \{/ {c = 1} c && /"time":/ {sub(/.*"time": "/, ""); sub(/".*/, ""); print; exit}' <<<"$COMMIT_JSON")"
+    COMMIT_TITLE="$(sed -n 's/^ *"message": "//p' <<<"$COMMIT_JSON" | sed 's/\\n.*//; s/\\"/"/g' | head -n 1)"
+else
+    warn "cannot read the details of Dawn commit $COMMIT"
+fi
 
-# The milestone's Dawn branch, missing for builds from main.
+# The milestone's Dawn branch, missing for builds from main: Gitiles then answers {}.
 CHROME_BRANCH="$(cut -d . -f 3 <<<"$VERSION")"
 BRANCH="chromium/$CHROME_BRANCH"
-BRANCH_TIP="$(fetch_json "$DAWN_GITILES/+refs/heads/$BRANCH?format=JSON" | sed -n 's/^ *"value": "\([0-9a-f]*\)".*/\1/p')"
+BRANCH_KNOWN=1
+BRANCH_TIP=""
 AHEAD=""
+if BRANCH_JSON="$(fetch_json "$DAWN_GITILES/+refs/heads/$BRANCH?format=JSON")"; then
+    BRANCH_TIP="$(sed -n 's/^ *"value": "\([0-9a-f]*\)".*/\1/p' <<<"$BRANCH_JSON")"
+else
+    warn "cannot look up the Dawn branch $BRANCH"
+    BRANCH_KNOWN=0
+fi
 if [[ -z "$BRANCH_TIP" ]]; then
     BRANCH=""
 elif [[ "$BRANCH_TIP" == "$COMMIT" ]]; then
     AHEAD=0
-else
-    LOG="$(fetch_json "$DAWN_GITILES/+log/$COMMIT..$BRANCH_TIP?format=JSON")"
+elif LOG="$(fetch_json "$DAWN_GITILES/+log/$COMMIT..$BRANCH_TIP?format=JSON")"; then
     AHEAD="$(grep -c '^ *"commit": "' <<<"$LOG" || true)"
     # Gitiles pages logs; a "next" key means there are more.
     ! grep -q '"next":' <<<"$LOG" || AHEAD="$AHEAD+"
+else
+    warn "cannot count the commits of $BRANCH after $COMMIT"
+    AHEAD="?"
 fi
 
 if [[ $ENV == 1 ]]; then
@@ -223,9 +248,11 @@ if [[ $ENV == 1 ]]; then
 else
     echo "Chrome:      $VERSION"
     echo "Dawn commit: $COMMIT"
-    echo "             $COMMIT_DATE  $COMMIT_TITLE"
+    [[ -z "$COMMIT_DATE$COMMIT_TITLE" ]] || echo "             $COMMIT_DATE  $COMMIT_TITLE"
     echo "             $DAWN_GITILES/+/$COMMIT"
-    if [[ -z "$BRANCH" ]]; then
+    if [[ $BRANCH_KNOWN == 0 ]]; then
+        echo "Dawn branch: unknown (Gitiles cannot be reached)"
+    elif [[ -z "$BRANCH" ]]; then
         echo "Dawn branch: none (chromium/$CHROME_BRANCH does not exist: a build from main)"
     elif [[ "$AHEAD" == 0 ]]; then
         echo "Dawn branch: $BRANCH, at its tip"
