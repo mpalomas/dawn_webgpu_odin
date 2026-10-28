@@ -99,10 +99,11 @@ jobs:
           fi
           cmake --version
 
-      # By commit, resolved once by the resolve job: the 4 jobs looking it up at once get throttled.
+      # By commit, resolved once by the resolve job: the 4 jobs looking it up at once get throttled. Outside
+      # the workspace, which is this repository (and has a dawn/ directory).
       - name: Fetch Dawn and its dependencies
         if: steps.cache.outputs.cache-hit != 'true'
-        run: tools/dawn_for_chrome.sh --fetch dawn --deps "$DAWN_COMMIT"
+        run: tools/dawn_for_chrome.sh --fetch "$RUNNER_TEMP/dawn" --deps "$DAWN_COMMIT"
 
       # Linux: the runner's GCC 14 (Dawn needs GCC 12+ or Clang 19+), so the libraries need glibc 2.39+ and
       # libstdc++ 14+. macOS: macOS 13+, as Dawn's own CI.
@@ -114,8 +115,8 @@ jobs:
           else
             export MACOSX_DEPLOYMENT_TARGET=13.0
           fi
-          cp "tools/$SCRIPT" dawn/
-          BUILD_DIR="$PWD/dawn-build" INSTALL_DIR="$PWD/dawn-install" bash "dawn/$SCRIPT" all "$LINKAGE"
+          cp "tools/$SCRIPT" "$RUNNER_TEMP/dawn/"
+          BUILD_DIR="$RUNNER_TEMP/dawn-build" INSTALL_DIR="$PWD/dawn-install" bash "$RUNNER_TEMP/dawn/$SCRIPT" all "$LINKAGE"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -132,9 +133,10 @@ jobs:
           - platform: linux-x86_64
             runner: ubuntu-24.04
             flags: -extra-linker-flags:-Wl,--gc-sections
+          # macOS 14: the GLFW library of vendor:glfw targets it (the Dawn libraries target 13).
           - platform: macos-arm64
             runner: macos-latest
-            flags: -extra-linker-flags:-Wl,-dead_strip -minimum-os-version:13.0
+            flags: -extra-linker-flags:-Wl,-dead_strip -minimum-os-version:14.0
     name: verify (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30

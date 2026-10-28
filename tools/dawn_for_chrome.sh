@@ -94,10 +94,12 @@ checkout_dawn() {
             git -C "$FETCH_DIR" init -q
             git -C "$FETCH_DIR" remote add origin "$DAWN_GITILES"
             retry git -C "$FETCH_DIR" fetch -q --depth 1 origin "$COMMIT"
+        elif [[ "$(git -C "$FETCH_DIR" rev-parse --show-toplevel 2>/dev/null)" != "$(cd "$FETCH_DIR" && pwd -P)" ]]; then
+            # In a directory inside another repository (this one, say), git would work on that repository.
+            die "$FETCH_DIR is not empty and not the root of a git repository"
         elif git -C "$FETCH_DIR" cat-file -e "$COMMIT^{commit}" 2>/dev/null; then
             echo "Dawn $COMMIT is already in $FETCH_DIR"
         else
-            git -C "$FETCH_DIR" rev-parse --git-dir >/dev/null 2>&1 || die "$FETCH_DIR is not empty and not a git repository"
             echo "Fetching Dawn $COMMIT into $FETCH_DIR"
             # Keep a full clone full: --depth would make it shallow.
             local depth=()
