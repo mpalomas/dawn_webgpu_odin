@@ -4,7 +4,8 @@
 #
 # Usage: tools/dawn_for_chrome.sh [options] <chrome>
 #   <chrome>        A full version (156.0.8078.48), a milestone (156: its latest stable release), or a
-#                   channel (stable, beta, dev, canary: its latest release)
+#                   channel (stable, beta, dev, canary: its latest release). Or a Dawn commit (40 hex
+#                   digits), to --fetch it without looking anything up
 #   --platform P    Platform for milestones and channels: Mac, Windows, Linux (default: this OS)
 #   --fetch DIR     Check out the Dawn commit in DIR: a shallow clone if DIR is new or empty, else a fetch
 #                   into the existing Dawn repo there
@@ -21,6 +22,8 @@
 # branch does not exist (canary and dev builds from main).
 
 set -euo pipefail
+# A CDPATH would make `cd` look up relative directories elsewhere.
+unset CDPATH
 
 CHROMIUM_GITILES=https://chromium.googlesource.com/chromium/src
 DAWN_GITILES=https://dawn.googlesource.com/dawn
@@ -36,8 +39,9 @@ die() {
     exit 1
 }
 
+# Gitiles answers 429 or 503 under load: curl retries those, with a backoff of up to a minute in all.
 fetch() {
-    curl -fsSL --retry 3 "$1"
+    curl -fsSL --retry 6 "$1"
 }
 
 # Gitiles JSON starts with a `)]}'` line, against XSSI.
@@ -63,6 +67,93 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$CHROME" ]] || usage
 [[ $DEPS == 0 || -n "$FETCH_DIR" ]] || die "--deps needs --fetch"
+[[ -z "$FETCH_DIR" || "$FETCH_DIR" == /* ]] || FETCH_DIR="$PWD/$FETCH_DIR"
+
+# Runs a command up to 3 times, for network operations.
+retry() {
+    local attempt
+    for attempt in 1 2 3; do
+        if "$@"; then
+            return 0
+        fi
+        if [[ $attempt -lt 3 ]]; then
+            echo "Failed, retrying in $((attempt * 20)) s" >&2
+            sleep $((attempt * 20))
+        fi
+    done
+    return 1
+}
+
+# Checks out $COMMIT in $FETCH_DIR, with Dawn's dependencies if $DEPS. Progress goes to stderr, so that
+# --env output stays clean.
+checkout_dawn() {
+    {
+        if [[ ! -d "$FETCH_DIR" || -z "$(ls -A "$FETCH_DIR")" ]]; then
+            echo "Fetching Dawn $COMMIT into $FETCH_DIR (shallow)"
+            mkdir -p "$FETCH_DIR"
+            git -C "$FETCH_DIR" init -q
+            git -C "$FETCH_DIR" remote add origin "$DAWN_GITILES"
+            retry git -C "$FETCH_DIR" fetch -q --depth 1 origin "$COMMIT"
+        elif git -C "$FETCH_DIR" cat-file -e "$COMMIT^{commit}" 2>/dev/null; then
+            echo "Dawn $COMMIT is already in $FETCH_DIR"
+        else
+            git -C "$FETCH_DIR" rev-parse --git-dir >/dev/null 2>&1 || die "$FETCH_DIR is not empty and not a git repository"
+            echo "Fetching Dawn $COMMIT into $FETCH_DIR"
+            # Keep a full clone full: --depth would make it shallow.
+            local depth=()
+            [[ "$(git -C "$FETCH_DIR" rev-parse --is-shallow-repository)" == false ]] || depth=(--depth 1)
+            retry git -C "$FETCH_DIR" fetch -q ${depth[@]+"${depth[@]}"} "$DAWN_GITILES" "$COMMIT"
+        fi
+        git -C "$FETCH_DIR" -c advice.detachedHead=false checkout -q --detach "$COMMIT"
+        echo "Checked out $COMMIT in $FETCH_DIR"
+
+        if [[ $DEPS == 1 ]]; then
+            fetch_dependencies
+        fi
+    } >&2
+}
+
+# Runs Dawn's tools/fetch_dawn_dependencies.py. It ignores git's errors: a dependency whose fetch failed is
+# left as a repository without a checkout, which a second run does not repair. Such repositories are
+# emptied and fetched again, up to 3 times. (The script clones into the empty directory that Dawn's
+# checkout has for each dependency, so the directory must stay.)
+fetch_dependencies() {
+    local attempt repo broken
+    for attempt in 1 2 3; do
+        echo "Fetching Dawn's dependencies"
+        python3 "$FETCH_DIR/tools/fetch_dawn_dependencies.py" --directory "$FETCH_DIR"
+        broken=()
+        while IFS= read -r repo; do
+            repo="${repo%/.git}"
+            git -C "$repo" rev-parse -q --verify HEAD >/dev/null || broken+=("$repo")
+        done < <(find "$FETCH_DIR/third_party" -name .git -prune)
+        if [[ ${#broken[@]} == 0 ]]; then
+            return 0
+        fi
+        echo "Not checked out: ${broken[*]}"
+        for repo in "${broken[@]}"; do
+            rm -rf "$repo"
+            mkdir "$repo"
+        done
+        if [[ $attempt -lt 3 ]]; then
+            echo "Retrying in $((attempt * 20)) s"
+            sleep $((attempt * 20))
+        fi
+    done
+    die "cannot fetch Dawn's dependencies"
+}
+
+# A Dawn commit: nothing to look up.
+if [[ "$CHROME" =~ ^[0-9a-f]{40}$ ]]; then
+    COMMIT="$CHROME"
+    if [[ $ENV == 1 ]]; then
+        echo "DAWN_COMMIT=$COMMIT"
+    else
+        echo "Dawn commit: $COMMIT"
+    fi
+    [[ -z "$FETCH_DIR" ]] || checkout_dawn
+    exit 0
+fi
 
 if [[ -z "$PLATFORM" ]]; then
     case "$(uname -s)" in
@@ -83,18 +174,18 @@ latest_version() {
 
 case "$CHROME" in
     [0-9]*.[0-9]*.[0-9]*.[0-9]*) VERSION="$CHROME" ;;
-    [0-9]*) VERSION="$(latest_version Stable "$CHROME")" ;;
+    [0-9] | [0-9][0-9] | [0-9][0-9][0-9]) VERSION="$(latest_version Stable "$CHROME")" ;;
     stable | beta | dev | canary)
         channel="$(tr '[:lower:]' '[:upper:]' <<<"${CHROME:0:1}")${CHROME:1}"
         VERSION="$(latest_version "$channel")"
         ;;
-    *) die "expected a version (156.0.8078.48), a milestone (156) or a channel (stable, beta, dev, canary), got '$CHROME'" ;;
+    *) die "expected a version (156.0.8078.48), a milestone (156), a channel (stable, beta, dev, canary) or a full Dawn commit, got '$CHROME'" ;;
 esac
 [[ -n "$VERSION" ]] || die "no $PLATFORM release found for '$CHROME'"
 
 # DEPS at the version's tag, base64-encoded by ?format=TEXT.
 DEPS_FILE="$(fetch "$CHROMIUM_GITILES/+/refs/tags/$VERSION/DEPS?format=TEXT" | base64 --decode)" ||
-    die "no Chromium tag $VERSION"
+    die "cannot read Chromium's DEPS at tag $VERSION (see curl's error: 404 if there is no such tag)"
 COMMIT="$(sed -n "s/^ *'dawn_revision': *'\([0-9a-f]\{40\}\)'.*/\1/p" <<<"$DEPS_FILE")"
 [[ -n "$COMMIT" ]] || die "no dawn_revision in DEPS at $VERSION"
 
@@ -141,31 +232,4 @@ else
     fi
 fi
 
-[[ -n "$FETCH_DIR" ]] || exit 0
-
-# Progress goes to stderr, so that --env output stays clean.
-{
-    if [[ ! -d "$FETCH_DIR" || -z "$(ls -A "$FETCH_DIR")" ]]; then
-        echo "Fetching Dawn $COMMIT into $FETCH_DIR (shallow)"
-        mkdir -p "$FETCH_DIR"
-        git -C "$FETCH_DIR" init -q
-        git -C "$FETCH_DIR" remote add origin "$DAWN_GITILES"
-        git -C "$FETCH_DIR" fetch -q --depth 1 origin "$COMMIT"
-    elif git -C "$FETCH_DIR" cat-file -e "$COMMIT^{commit}" 2>/dev/null; then
-        echo "Dawn $COMMIT is already in $FETCH_DIR"
-    else
-        git -C "$FETCH_DIR" rev-parse --git-dir >/dev/null 2>&1 || die "$FETCH_DIR is not empty and not a git repository"
-        echo "Fetching Dawn $COMMIT into $FETCH_DIR"
-        # Keep a full clone full: --depth would make it shallow.
-        depth=()
-        [[ "$(git -C "$FETCH_DIR" rev-parse --is-shallow-repository)" == false ]] || depth=(--depth 1)
-        git -C "$FETCH_DIR" fetch -q "${depth[@]}" "$DAWN_GITILES" "$COMMIT"
-    fi
-    git -C "$FETCH_DIR" -c advice.detachedHead=false checkout -q --detach "$COMMIT"
-    echo "Checked out $COMMIT in $FETCH_DIR"
-
-    if [[ $DEPS == 1 ]]; then
-        echo "Fetching Dawn's dependencies"
-        (cd "$FETCH_DIR" && python3 tools/fetch_dawn_dependencies.py)
-    fi
-} >&2
+[[ -z "$FETCH_DIR" ]] || checkout_dawn

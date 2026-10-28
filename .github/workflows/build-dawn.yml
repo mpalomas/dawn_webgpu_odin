@@ -71,7 +71,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:
-      CHROME_VERSION: ${{ needs.resolve.outputs.chrome_version }}
+      DAWN_COMMIT: ${{ needs.resolve.outputs.dawn_commit }}
       LINKAGE: ${{ matrix.linkage }}
       SCRIPT: ${{ matrix.script }}
     steps:
@@ -99,9 +99,10 @@ jobs:
           fi
           cmake --version
 
+      # By commit, resolved once by the resolve job: the 4 jobs looking it up at once get throttled.
       - name: Fetch Dawn and its dependencies
         if: steps.cache.outputs.cache-hit != 'true'
-        run: tools/dawn_for_chrome.sh --fetch dawn --deps "$CHROME_VERSION"
+        run: tools/dawn_for_chrome.sh --fetch dawn --deps "$DAWN_COMMIT"
 
       # Linux: the runner's GCC 14 (Dawn needs GCC 12+ or Clang 19+), so the libraries need glibc 2.39+ and
       # libstdc++ 14+. macOS: macOS 13+, as Dawn's own CI.
