@@ -71,7 +71,6 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <math.h>
-#include "dawn/dawn_version.h"
 
 #define _wgpu_COMMA ,
 #if defined(__cplusplus)
@@ -607,7 +606,6 @@ typedef enum WGPUFeatureName {
     WGPUFeatureName_TextureComponentSwizzle = 0x00000016,
     WGPUFeatureName_SubgroupSizeControl = 0x00000017,
     WGPUFeatureName_TextureCompressionUnaligned = 0x00000018,
-    WGPUFeatureName_AtomicVec2uMinMax = 0x00000019,
     WGPUFeatureName_DawnInternalUsages = 0x00050000,
     WGPUFeatureName_DawnMultiPlanarFormats = 0x00050001,
     WGPUFeatureName_DawnNative = 0x00050002,
@@ -666,14 +664,15 @@ typedef enum WGPUFeatureName {
     WGPUFeatureName_SharedBufferMemoryFromWindowsHandle = 0x00050038,
     WGPUFeatureName_SharedTextureMemoryD3D12Resource = 0x00050039,
     WGPUFeatureName_ChromiumExperimentalSamplingResourceTable = 0x0005003A,
-    WGPUFeatureName_Unorm16FormatsForExternalTexture = 0x0005003B,
-    WGPUFeatureName_OpaqueYCbCrAndroidForExternalTexture = 0x0005003C,
-    WGPUFeatureName_Unorm16Filterable = 0x0005003D,
-    WGPUFeatureName_RenderPassRenderArea = 0x0005003E,
-    WGPUFeatureName_AdapterPropertiesDrm = 0x0005003F,
-    WGPUFeatureName_DawnAllowUndefinedLoadStoreOp = 0x00050040,
-    WGPUFeatureName_BufferMapWriteExtendedUsages = 0x00050041,
-    WGPUFeatureName_SharedBufferMemoryHostPointer = 0x00050042,
+    WGPUFeatureName_AtomicVec2uMinMax = 0x0005003B,
+    WGPUFeatureName_Unorm16FormatsForExternalTexture = 0x0005003C,
+    WGPUFeatureName_OpaqueYCbCrAndroidForExternalTexture = 0x0005003D,
+    WGPUFeatureName_Unorm16Filterable = 0x0005003E,
+    WGPUFeatureName_RenderPassRenderArea = 0x0005003F,
+    WGPUFeatureName_AdapterPropertiesDrm = 0x00050040,
+    WGPUFeatureName_DawnAllowUndefinedLoadStoreOp = 0x00050041,
+    WGPUFeatureName_BufferMapWriteExtendedUsages = 0x00050042,
+    WGPUFeatureName_SharedBufferMemoryHostPointer = 0x00050043,
     WGPUFeatureName_Force32 = 0x7FFFFFFF
 } WGPUFeatureName WGPU_ENUM_ATTRIBUTE;
 
@@ -967,8 +966,6 @@ typedef enum WGPUSType {
     WGPUSType_RenderBundleEncoderResourceTable = 0x00050052,
     WGPUSType_DawnShaderSourceSPIRV = 0x00050053,
     WGPUSType_SharedBufferMemoryHostPointerDescriptor = 0x00050054,
-    WGPUSType_RequestAdapterOptionsVulkanUUIDs = 0x00050055,
-    WGPUSType_AdapterPropertiesVulkanUUIDs = 0x00050056,
     WGPUSType_Force32 = 0x7FFFFFFF
 } WGPUSType WGPU_ENUM_ATTRIBUTE;
 
@@ -1243,7 +1240,6 @@ typedef enum WGPUWGSLLanguageFeatureName {
     WGPUWGSLLanguageFeatureName_SizedBindingArray = 0x00050005,
     WGPUWGSLLanguageFeatureName_TexelBuffers = 0x00050006,
     WGPUWGSLLanguageFeatureName_ChromiumPrint = 0x00050007,
-    WGPUWGSLLanguageFeatureName_MultisampledArrayTextures = 0x00050008,
     WGPUWGSLLanguageFeatureName_Force32 = 0x7FFFFFFF
 } WGPUWGSLLanguageFeatureName WGPU_ENUM_ATTRIBUTE;
 
@@ -1301,6 +1297,8 @@ static const WGPUTextureUsage WGPUTextureUsage_TransientAttachment = 0x000000000
 static const WGPUTextureUsage WGPUTextureUsage_StorageAttachment = 0x0000000000000040;
 
 typedef void (*WGPUCallback)(void * userdata) WGPU_FUNCTION_ATTRIBUTE;
+typedef size_t (*WGPUDawnLoadCacheDataFunction)(void const * key, size_t keySize, void * value, size_t valueSize, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
+typedef void (*WGPUDawnStoreCacheDataFunction)(void const * key, size_t keySize, void const * value, size_t valueSize, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
 typedef void (*WGPUProc)(void) WGPU_FUNCTION_ATTRIBUTE;
 
 // Callback function pointers
