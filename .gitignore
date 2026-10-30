@@ -1,5 +1,9 @@
 lib/**/*.a
 lib/**/*.so
 lib/**/*.dylib
+lib/**/*.lib
+lib/**/*.dll
 *.bin
+*.exe
+*.pdb
 /examples/*/*.bin

@@ -1,7 +1,7 @@
-# Builds Dawn at the commit of a Chrome release, static and shared, for Linux and macOS, regenerates the
-# bindings and builds the examples against the libraries. With `publish`, then creates the release
+# Builds Dawn at the commit of a Chrome release, static and shared, for Linux, macOS and Windows, regenerates
+# the bindings and builds the examples against the libraries. With `publish`, then creates the release
 # dawn-chrome-<version> with the libraries, and opens a pull request that commits the bindings and pins the
-# release in dawn/release.env (read by tools/fetch_dawn_libs.sh).
+# release in dawn/release.env (read by tools/fetch_dawn_libs.sh and .ps1).
 #
 # Opening the pull request requires Settings > Actions > General > "Allow GitHub Actions to create and
 # approve pull requests".
@@ -58,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [linux-x86_64, macos-arm64]
+        platform: [linux-x86_64, macos-arm64, windows-x86_64]
         linkage: [static, shared]
         include:
           - platform: linux-x86_64
@@ -67,6 +67,9 @@ jobs:
           - platform: macos-arm64
             runner: macos-latest
             script: build-metal-min.sh
+          - platform: windows-x86_64
+            runner: windows-2025
+            script: build-d3d12-min.ps1
     name: build (${{ matrix.platform }}, ${{ matrix.linkage }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
@@ -89,7 +92,7 @@ jobs:
           key: dawn-v1-${{ matrix.platform }}-${{ matrix.linkage }}-${{ needs.resolve.outputs.dawn_commit }}-${{ hashFiles(format('tools/{0}', matrix.script)) }}
 
       - name: Install build tools
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then
             sudo apt-get update
@@ -99,16 +102,27 @@ jobs:
           fi
           cmake --version
 
-      # By commit, resolved once by the resolve job: the 4 jobs looking it up at once get throttled. Outside
+      # By commit, resolved once by the resolve job: the 6 jobs looking it up at once get throttled. Outside
       # the workspace, which is this repository (and has a dawn/ directory).
       - name: Fetch Dawn and its dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
         run: tools/dawn_for_chrome.sh --fetch "$RUNNER_TEMP/dawn" --deps "$DAWN_COMMIT"
+
+      # Dawn as committed, with LF line endings, and paths over 260 characters.
+      - name: Fetch Dawn and its dependencies (Windows)
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.longpaths true
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja --no-progress -y }
+          cmake --version
+          tools/dawn_for_chrome.ps1 -Fetch "$env:RUNNER_TEMP/dawn" -Deps $env:DAWN_COMMIT
 
       # Linux: the runner's GCC 14 (Dawn needs GCC 12+ or Clang 19+), so the libraries need glibc 2.39+ and
       # libstdc++ 14+. macOS: macOS 13+, as Dawn's own CI.
       - name: Build Dawn
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then
             export CC=gcc-14 CXX=g++-14
@@ -117,6 +131,16 @@ jobs:
           fi
           cp "tools/$SCRIPT" "$RUNNER_TEMP/dawn/"
           BUILD_DIR="$RUNNER_TEMP/dawn-build" INSTALL_DIR="$PWD/dawn-install" bash "$RUNNER_TEMP/dawn/$SCRIPT" all "$LINKAGE"
+
+      # Windows: the MSVC of the runner's Visual Studio. The libraries need Windows 10+.
+      - name: Build Dawn (Windows)
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item "tools/$env:SCRIPT" "$env:RUNNER_TEMP/dawn/"
+          $env:BUILD_DIR = "$env:RUNNER_TEMP/dawn-build"
+          $env:INSTALL_DIR = "$PWD/dawn-install"
+          & "$env:RUNNER_TEMP/dawn/$env:SCRIPT" all $env:LINKAGE
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -137,6 +161,10 @@ jobs:
           - platform: macos-arm64
             runner: macos-latest
             flags: -extra-linker-flags:-Wl,-dead_strip -minimum-os-version:14.0
+          # link.exe drops unused code by default.
+          - platform: windows-x86_64
+            runner: windows-2025
+            flags: ''
     name: verify (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -164,10 +192,17 @@ jobs:
           path: ${{ runner.temp }}/installs
 
       - name: Import the libraries and generate the bindings
+        if: runner.os != 'Windows'
         run: tools/update_dawn.sh "$RUNNER_TEMP/installs/dawn-$PLATFORM-static" "$RUNNER_TEMP/installs/dawn-$PLATFORM-shared"
+
+      - name: Import the libraries and generate the bindings (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: tools/update_dawn.ps1 "$env:RUNNER_TEMP/installs/dawn-$env:PLATFORM-static" "$env:RUNNER_TEMP/installs/dawn-$env:PLATFORM-shared"
 
       # Built only: the runners have no GPU to run them.
       - name: Build the examples
+        if: runner.os != 'Windows'
         run: |
           for example in triangle cube; do
             # FLAGS holds several flags.
@@ -178,10 +213,20 @@ jobs:
           done
           ls -l ./*.bin
 
+      - name: Build the examples (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($example in 'triangle', 'cube') {
+            odin build examples/$example -collection:gpu=. -out:$example-static.exe
+            odin build examples/$example -collection:gpu=. -define:DAWN_SHARED=true -out:$example-shared.exe
+          }
+          Get-ChildItem *.exe | Format-Table Name, Length
+
       - name: Package the libraries
         run: |
           # No AppleDouble files from macOS tar.
-          COPYFILE_DISABLE=1 tar -czf "dawn-$PLATFORM.tar.gz" lib/"$PLATFORM"/libwebgpu_dawn.*
+          COPYFILE_DISABLE=1 tar -czf "dawn-$PLATFORM.tar.gz" lib/"$PLATFORM"/*webgpu_dawn.*
           tar -tzvf "dawn-$PLATFORM.tar.gz"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -226,9 +271,12 @@ jobs:
           path: ${{ runner.temp }}/assets
           merge-multiple: true
 
-      # webgpu.h has no platform-specific declarations, so both platforms must generate the same bindings.
+      # webgpu.h has no platform-specific declarations, so all platforms must generate the same bindings.
       - name: Check that the platforms agree
-        run: diff -r "$RUNNER_TEMP/bindings/bindings-linux-x86_64" "$RUNNER_TEMP/bindings/bindings-macos-arm64"
+        run: |
+          for platform in macos-arm64 windows-x86_64; do
+            diff -r "$RUNNER_TEMP/bindings/bindings-linux-x86_64" "$RUNNER_TEMP/bindings/bindings-$platform"
+          done
 
       - name: Create the release
         run: |
@@ -237,7 +285,7 @@ jobs:
           (cd "$assets" && sha256sum dawn-*.tar.gz webgpu.h > SHA256SUMS && cat SHA256SUMS)
           notes="Dawn built at the commit of Chrome $CHROME_VERSION: https://dawn.googlesource.com/dawn/+/$DAWN_COMMIT
 
-          Static and shared libraries for Linux x86_64 (built on Ubuntu 24.04 with GCC 14) and macOS arm64 (macOS 13+). Download them with \`tools/fetch_dawn_libs.sh\`.
+          Static and shared libraries for Linux x86_64 (built on Ubuntu 24.04 with GCC 14), macOS arm64 (macOS 13+) and Windows x86_64 (D3D12, Windows 10+, built with MSVC). Download them with \`tools/fetch_dawn_libs.sh\` or \`tools/fetch_dawn_libs.ps1\`.
 
           Built by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -280,7 +328,7 @@ jobs:
           fi
           body="Updates the bindings to Dawn $DAWN_COMMIT, the commit of Chrome $CHROME_VERSION, and pins the release [$TAG]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG).
 
-          Generated by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID, which built the examples against the libraries on Linux and macOS.
+          Generated by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID, which built the examples against the libraries on Linux, macOS and Windows.
 
           Pull requests opened by GitHub Actions do not trigger CI: close and reopen this one to run it."
           gh pr create --repo "$GITHUB_REPOSITORY" --base "$GITHUB_REF_NAME" --head "$branch" \
