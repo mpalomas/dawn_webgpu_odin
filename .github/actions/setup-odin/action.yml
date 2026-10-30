@@ -1,5 +1,5 @@
 name: Set up Odin
-description: Downloads an Odin nightly build or release and adds it to the PATH.
+description: Downloads an Odin nightly build or release (Linux x64, macOS arm64, Windows x64) and adds it to the PATH.
 
 inputs:
   # Odin only runs the generator and builds the examples here, so a nightly cannot break the published
@@ -14,6 +14,7 @@ runs:
   using: composite
   steps:
     - name: Download Odin (${{ inputs.version }})
+      if: runner.os != 'Windows'
       shell: bash
       env:
         ODIN_VERSION: ${{ inputs.version }}
@@ -44,3 +45,44 @@ runs:
         tar -xzf "$archive" -C "$dir" --strip-components=1
         echo "$dir" >> "$GITHUB_PATH"
         "$dir/odin" version
+
+    # Windows builds are zip files, holding one directory (dist/ for nightlies). The nightly list gives no
+    # SHA-1 for them ("none").
+    - name: Download Odin (${{ inputs.version }}, Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        ODIN_VERSION: ${{ inputs.version }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $ProgressPreference = 'SilentlyContinue'
+        if ($env:RUNNER_ARCH -ne 'X64') {
+          throw "no Odin build for Windows-$env:RUNNER_ARCH"
+        }
+        $archive = Join-Path $env:RUNNER_TEMP 'odin.zip'
+        if ($env:ODIN_VERSION -eq 'nightly') {
+          $json = Invoke-RestMethod https://odinbinaries.thisdrunkdane.io/file/odin-binaries/nightly.json -MaximumRetryCount 3
+          $latest = $json.files.PSObject.Properties.Name | Sort-Object | Select-Object -Last 1
+          $file = $json.files.$latest | Where-Object name -like 'odin-windows-amd64-nightly+*' | Select-Object -First 1
+          if (-not $file) {
+            throw 'no windows-amd64 nightly in nightly.json'
+          }
+          Write-Host "Nightly: $($file.name)"
+          Invoke-WebRequest $file.url -OutFile $archive -MaximumRetryCount 3
+          if ($file.sha1 -match '^[0-9a-f]{40}$') {
+            $actual = (Get-FileHash -Algorithm SHA1 $archive).Hash
+            if ($actual -ne $file.sha1.ToUpperInvariant()) {
+              throw "SHA-1 mismatch for the nightly: $actual, expected $($file.sha1)"
+            }
+          } else {
+            Write-Host "nightly.json has no SHA-1 for $($file.name)"
+          }
+        } else {
+          Invoke-WebRequest "https://github.com/odin-lang/Odin/releases/download/$env:ODIN_VERSION/odin-windows-amd64-$env:ODIN_VERSION.zip" -OutFile $archive -MaximumRetryCount 3
+        }
+        $extracted = Join-Path $env:RUNNER_TEMP 'odin-zip'
+        Expand-Archive $archive $extracted
+        $dir = @(Get-ChildItem -Directory $extracted)
+        $odin = if ($dir.Count -eq 1 -and -not (Test-Path (Join-Path $extracted 'odin.exe'))) { $dir[0].FullName } else { $extracted }
+        Add-Content $env:GITHUB_PATH $odin
+        & (Join-Path $odin 'odin.exe') version

@@ -2536,6 +2536,13 @@ when DAWN_SHARED {
 		"system:Metal.framework",
 		"system:QuartzCore.framework",
 	}
+} else when ODIN_OS == .Windows {
+	foreign import lib {
+		DAWN_LIB,
+		"system:user32.lib",
+		"system:onecore_apiset.lib",
+		"system:dxguid.lib",
+	}
 }
 
 @(default_calling_convention = "c", link_prefix = "wgpu")

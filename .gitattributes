@@ -1,0 +1,4 @@
+# LF everywhere, also with Git for Windows' core.autocrlf: the generator test compares
+# wgpu/wgpu_generated.odin byte for byte with its output, tools/fetch_dawn_libs.* compare webgpu.h with the
+# release's, and the shell scripts must run in bash.
+* text=auto eol=lf

@@ -3,7 +3,7 @@
 # GitHub release named in dawn/release.env (written by .github/workflows/build-dawn.yml).
 #
 # Usage: tools/fetch_dawn_libs.sh [PLATFORM...]
-#   PLATFORM  linux-x86_64 or macos-arm64 (default: this machine's)
+#   PLATFORM  linux-x86_64, macos-arm64 or windows-x86_64 (default: this machine's)
 #
 # Checks the release's webgpu.h against dawn/include/dawn/webgpu.h and the downloads against the release's
 # SHA256SUMS. Uses gh when it is installed and logged in (required while the repository is private), else
@@ -34,6 +34,7 @@ else
     case "$(uname -s)" in
         Linux) os=linux ;;
         Darwin) os=macos ;;
+        MINGW* | MSYS* | CYGWIN*) os=windows ;;
         *) die "unsupported OS $(uname -s)" ;;
     esac
     case "$(uname -m)" in

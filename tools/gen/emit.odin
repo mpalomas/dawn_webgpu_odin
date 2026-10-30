@@ -37,7 +37,8 @@ C_PRIMITIVES :: [?][2]string{
 }
 
 // The shared library carries its own dependencies. The static one needs the C++ runtime and, on macOS,
-// the frameworks of the Metal backend. On Linux, Dawn loads Vulkan at runtime with dlopen.
+// the frameworks of the Metal backend. On Linux, Dawn loads Vulkan at runtime with dlopen; on Windows,
+// D3D12 and DXGI with LoadLibrary, and the objects name the C++ runtime (the static one, /MT) themselves.
 // DAWN_SHARED, DAWN_LIB and DAWN_STATIC_CXX are in wgpu.odin.
 FOREIGN_IMPORT :: `when DAWN_SHARED {
 	foreign import lib {
@@ -72,6 +73,13 @@ FOREIGN_IMPORT :: `when DAWN_SHARED {
 		"system:IOSurface.framework",
 		"system:Metal.framework",
 		"system:QuartzCore.framework",
+	}
+} else when ODIN_OS == .Windows {
+	foreign import lib {
+		DAWN_LIB,
+		"system:user32.lib",
+		"system:onecore_apiset.lib",
+		"system:dxguid.lib",
 	}
 }
 
@@ -109,7 +117,10 @@ RAW_FUNCTIONS :: [?]string{
 
 // Generates the Odin bindings for a Dawn `webgpu.h`. `source` and `version` only go into the file header.
 generate :: proc(header_src, source, version: string) -> (out: string, err: string) {
-	ir, parse_err := parse(header_src)
+	// A header checked out with CRLF line endings (Git for Windows' core.autocrlf) would hide the
+	// backslashes ending the continuation lines of multi-line macros.
+	src, _ := strings.remove_all(header_src, "\r")
+	ir, parse_err := parse(src)
 	if parse_err != "" {
 		return "", parse_err
 	}

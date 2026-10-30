@@ -8,30 +8,34 @@ package wgpu
 import "base:intrinsics"
 import "base:runtime"
 
-// Link the shared Dawn library (libwebgpu_dawn.dylib or .so) instead of the static one.
+// Link the shared Dawn library (libwebgpu_dawn.dylib or .so, webgpu_dawn.dll) instead of the static one.
 // Enable with -define:DAWN_SHARED=true.
 DAWN_SHARED :: #config(DAWN_SHARED, false)
 
 when ODIN_OS == .Linux {
-	@(private) OS  :: "linux"
-	@(private) EXT :: ".so" when DAWN_SHARED else ".a"
+	@(private) OS   :: "linux"
+	@(private) FILE :: "libwebgpu_dawn.so" when DAWN_SHARED else "libwebgpu_dawn.a"
 } else when ODIN_OS == .Darwin {
-	@(private) OS  :: "macos"
-	@(private) EXT :: ".dylib" when DAWN_SHARED else ".a"
+	@(private) OS   :: "macos"
+	@(private) FILE :: "libwebgpu_dawn.dylib" when DAWN_SHARED else "libwebgpu_dawn.a"
+} else when ODIN_OS == .Windows {
+	@(private) OS   :: "windows"
+	// The import library of webgpu_dawn.dll, named as vendor:wgpu names wgpu-native's.
+	@(private) FILE :: "webgpu_dawn.dll.lib" when DAWN_SHARED else "webgpu_dawn.lib"
 } else {
-	#panic("dawn_webgpu_odin: only Linux and macOS are supported for now")
+	#panic("dawn_webgpu_odin: only Linux, macOS and Windows are supported for now")
 }
 @(private) ARCH :: "x86_64" when ODIN_ARCH == .amd64 else "arm64" when ODIN_ARCH == .arm64 else #panic("dawn_webgpu_odin: unsupported architecture")
 
 // Path of the Dawn library, relative to this directory. Override with -define:DAWN_LIB=<path>.
-DAWN_LIB :: #config(DAWN_LIB, "../lib/" + OS + "-" + ARCH + "/libwebgpu_dawn" + EXT)
+DAWN_LIB :: #config(DAWN_LIB, "../lib/" + OS + "-" + ARCH + "/" + FILE)
 
 // Linux, static library only: link the C++ runtime statically (libstdc++.a), so the program does not
 // require a recent libstdc++.so on the machines it runs on. Enable with -define:DAWN_STATIC_CXX=true.
 DAWN_STATIC_CXX :: #config(DAWN_STATIC_CXX, false)
 
 when !#exists(DAWN_LIB) {
-	#panic("Could not find the Dawn library at '" + DAWN_LIB + "'. Run tools/update_dawn.sh <dawn install dir>, or pass -define:DAWN_LIB=<path>.")
+	#panic("Could not find the Dawn library at '" + DAWN_LIB + "'. Run tools/fetch_dawn_libs (.sh or .ps1), tools/update_dawn <dawn install dir>, or pass -define:DAWN_LIB=<path>.")
 }
 
 // The `foreign import` is in wgpu_generated.odin, since imports are file-scoped.
