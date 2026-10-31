@@ -112,7 +112,7 @@ init :: proc(app: ^App, title: cstring, width, height: i32) -> bool {
 		fmt.eprintln("wgpu.SurfaceGetCapabilities failed")
 		return false
 	}
-	app.format = caps.formats[0]
+	app.format = pick_format(caps)
 	wgpu.SurfaceCapabilitiesFreeMembers(caps)
 	fmt.println("surface format:", app.format)
 
@@ -220,6 +220,21 @@ present :: proc(app: ^App) {
 shader_module :: proc(device: wgpu.Device, label: string, code: string) -> wgpu.ShaderModule {
 	wgsl := wgpu.ShaderSourceWGSL{chain = {sType = .ShaderSourceWGSL}, code = code}
 	return wgpu.DeviceCreateShaderModule(device, &{nextInChain = &wgsl, label = label})
+}
+
+// Prefers an 8-bit format without sRGB encoding, so the shaders' colors are written as they are. The first
+// format differs: Dawn lists RGB10A2Unorm first on Vulkan, wgpu-native BGRA8UnormSrgb.
+@(private = "file")
+pick_format :: proc(caps: wgpu.SurfaceCapabilities) -> wgpu.TextureFormat {
+	formats := caps.formats[:caps.formatCount]
+	for preferred in ([2]wgpu.TextureFormat{.BGRA8Unorm, .RGBA8Unorm}) {
+		for format in formats {
+			if format == preferred {
+				return format
+			}
+		}
+	}
+	return formats[0]
 }
 
 // Processes events until a callback sets `done`. InstanceWaitAny would block instead of spinning, but
