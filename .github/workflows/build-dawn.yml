@@ -226,7 +226,7 @@ jobs:
       - name: Package the libraries
         run: |
           # No AppleDouble files from macOS tar.
-          COPYFILE_DISABLE=1 tar -czf "dawn-$PLATFORM.tar.gz" lib/"$PLATFORM"/*webgpu_dawn.*
+          COPYFILE_DISABLE=1 tar -czf "dawn-$PLATFORM.tar.gz" dawn/LICENSE lib/"$PLATFORM"/*webgpu_dawn.*
           tar -tzvf "dawn-$PLATFORM.tar.gz"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

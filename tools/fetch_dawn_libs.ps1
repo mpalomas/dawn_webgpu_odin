@@ -97,7 +97,7 @@ try {
     }
 
     foreach ($platform in $Platforms) {
-        # The archives hold lib/<platform>/<libraries>. tar is part of Windows 10 and later.
+        # The archives hold lib/<platform>/<libraries> and dawn/LICENSE. tar is part of Windows 10 and later.
         tar -xzf (Join-Path $tmp "dawn-$platform.tar.gz") -C $Repo
         Write-Host "Extracted to lib\$platform\:"
         Get-ChildItem (Join-Path $Repo "lib\$platform") | Format-Table Name, Length -AutoSize
