@@ -1,5 +1,7 @@
 # Checks the generator, the generated bindings and the examples, without Dawn: the examples are only
-# type-checked, against this repo's bindings and vendor:wgpu, for Linux, macOS and Windows.
+# type-checked, against this repo's bindings and vendor:wgpu, for Linux, macOS and Windows. Then builds
+# the examples against the prebuilt Dawn libraries of the pinned release on each of them (not run: the
+# runners have no GPU).
 name: CI
 
 on:
@@ -97,3 +99,76 @@ jobs:
           if ($issues) {
             throw "PSScriptAnalyzer: $(@($issues).Count) issue(s)"
           }
+
+  # Fetches the libraries of dawn/release.env, which also checks that they match the committed bindings,
+  # and links the examples against them, static and shared.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            flags: -extra-linker-flags:-Wl,--gc-sections
+          # macOS 14: the GLFW library of vendor:glfw targets it (the Dawn libraries target 13).
+          - runner: macos-latest
+            flags: -extra-linker-flags:-Wl,-dead_strip -minimum-os-version:14.0
+    name: build (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      FLAGS: ${{ matrix.flags }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-odin
+
+      # vendor:glfw links the system GLFW on Linux, and ships it for macOS. Odin links with clang, which
+      # takes libstdc++ from the newest GCC installed: g++-14 makes sure it is complete.
+      - name: Install GLFW and libstdc++
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglfw3-dev g++-14
+
+      - name: Fetch the Dawn libraries
+        run: tools/fetch_dawn_libs.sh
+
+      - name: Build the examples
+        run: |
+          for example in triangle cube; do
+            # FLAGS holds several flags.
+            # shellcheck disable=SC2086
+            odin build examples/$example -collection:gpu=. $FLAGS -out:$example-static.bin
+            # shellcheck disable=SC2086
+            odin build examples/$example -collection:gpu=. $FLAGS -define:DAWN_SHARED=true -out:$example-shared.bin
+          done
+          ls -l ./*.bin
+
+  build-windows:
+    name: build (windows-2025)
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-odin
+
+      - name: Fetch the Dawn libraries
+        run: tools/fetch_dawn_libs.ps1
+
+      # link.exe drops unused code by default.
+      - name: Build the examples
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          foreach ($example in 'triangle', 'cube') {
+            odin build examples/$example -collection:gpu=. -out:$example-static.exe
+            odin build examples/$example -collection:gpu=. -define:DAWN_SHARED=true -out:$example-shared.exe
+          }
+          Get-ChildItem *.exe | Format-Table Name, Length
