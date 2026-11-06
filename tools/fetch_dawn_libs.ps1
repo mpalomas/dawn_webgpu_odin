@@ -52,8 +52,8 @@ try {
     Write-Host "Downloading $($files -join ' ') from release $Tag of $Slug"
     $gh = -not $env:DAWN_RELEASE_URL -and (Get-Command gh -ErrorAction SilentlyContinue)
     if ($gh) {
-        gh auth status *> $null
-        $gh = $LASTEXITCODE -eq 0
+        # Not logged in is a non-zero exit, which throws here.
+        try { gh auth status 2>&1 | Out-Null } catch { $gh = $false }
     }
     if ($gh) {
         $patterns = $files | ForEach-Object { '--pattern', $_ }
