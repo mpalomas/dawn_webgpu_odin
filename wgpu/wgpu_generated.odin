@@ -283,6 +283,7 @@ FeatureName :: enum i32 {
 	TextureComponentSwizzle = 0x00000016,
 	SubgroupSizeControl = 0x00000017,
 	TextureCompressionUnaligned = 0x00000018,
+	AtomicVec2uMinMax = 0x00000019,
 	DawnInternalUsages = 0x00050000,
 	DawnMultiPlanarFormats = 0x00050001,
 	DawnNative = 0x00050002,
@@ -341,15 +342,14 @@ FeatureName :: enum i32 {
 	SharedBufferMemoryFromWindowsHandle = 0x00050038,
 	SharedTextureMemoryD3D12Resource = 0x00050039,
 	ChromiumExperimentalSamplingResourceTable = 0x0005003A,
-	AtomicVec2uMinMax = 0x0005003B,
-	Unorm16FormatsForExternalTexture = 0x0005003C,
-	OpaqueYCbCrAndroidForExternalTexture = 0x0005003D,
-	Unorm16Filterable = 0x0005003E,
-	RenderPassRenderArea = 0x0005003F,
-	AdapterPropertiesDrm = 0x00050040,
-	DawnAllowUndefinedLoadStoreOp = 0x00050041,
-	BufferMapWriteExtendedUsages = 0x00050042,
-	SharedBufferMemoryHostPointer = 0x00050043,
+	Unorm16FormatsForExternalTexture = 0x0005003B,
+	OpaqueYCbCrAndroidForExternalTexture = 0x0005003C,
+	Unorm16Filterable = 0x0005003D,
+	RenderPassRenderArea = 0x0005003E,
+	AdapterPropertiesDrm = 0x0005003F,
+	DawnAllowUndefinedLoadStoreOp = 0x00050040,
+	BufferMapWriteExtendedUsages = 0x00050041,
+	SharedBufferMemoryHostPointer = 0x00050042,
 }
 
 FilterMode :: enum i32 {
@@ -618,6 +618,8 @@ SType :: enum i32 {
 	RenderBundleEncoderResourceTable = 0x00050052,
 	DawnShaderSourceSPIRV = 0x00050053,
 	SharedBufferMemoryHostPointerDescriptor = 0x00050054,
+	RequestAdapterOptionsVulkanUUIDs = 0x00050055,
+	AdapterPropertiesVulkanUUIDs = 0x00050056,
 }
 
 SubgroupMatrixComponentType :: enum i32 {
@@ -879,6 +881,7 @@ WGSLLanguageFeatureName :: enum i32 {
 	SizedBindingArray = 0x00050005,
 	TexelBuffers = 0x00050006,
 	ChromiumPrint = 0x00050007,
+	MultisampledArrayTextures = 0x00050008,
 }
 
 BufferUsage :: enum i32 {
