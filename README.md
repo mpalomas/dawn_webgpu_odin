@@ -89,8 +89,7 @@ odin run examples/cube -collection:gpu=$(odin root)/vendor -define:DAWN=false   
 The linker flags drop unused Dawn code (link.exe does by default). `-define:DAWN=false` skips the Dawn-only
 adapter details; `vendor:wgpu` needs its library in `vendor/wgpu/lib/` (see its `doc.odin`).
 
-Space pauses, Esc quits. `--seconds=N` closes the window after N seconds. `--x11` forces X11 on Linux
-(needs a Dawn built with `DAWN_USE_X11=ON`, off in the min build).
+Space pauses, Esc quits. `--seconds=N` closes the window after N seconds. `--x11` forces X11 on Linux.
 
 ## Using the bindings
 

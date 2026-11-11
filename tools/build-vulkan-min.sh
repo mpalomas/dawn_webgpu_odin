@@ -69,7 +69,8 @@ configure() {
         \
         `# Window systems` \
         -DDAWN_USE_WAYLAND=ON \
-        -DDAWN_USE_X11=OFF \
+        `# X11: Dawn loads libX11 and libX11-xcb only when an Xlib surface is made (about 100 bytes)` \
+        -DDAWN_USE_X11=ON \
         -DDAWN_USE_GLFW=OFF \
         \
         `# Debug / test features` \

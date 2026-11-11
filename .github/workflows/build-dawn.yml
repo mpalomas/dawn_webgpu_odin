@@ -1,7 +1,8 @@
 # Builds Dawn at the commit of a Chrome release, static and shared, for Linux, macOS and Windows, regenerates
 # the bindings and builds the examples against the libraries. With `publish`, then creates the release
-# dawn-chrome-<version> with the libraries, and opens a pull request that commits the bindings and pins the
-# release in dawn/release.env (read by tools/fetch_dawn_libs.sh and .ps1).
+# dawn-chrome-<version>[-r<revision>] with the libraries, and opens a pull request that commits the bindings and
+# pins the release in dawn/release.env (read by tools/fetch_dawn_libs.sh and .ps1). A revision rebuilds the same
+# Dawn with other build options.
 #
 # Opening the pull request requires Settings > Actions > General > "Allow GitHub Actions to create and
 # approve pull requests".
@@ -14,6 +15,9 @@ on:
         description: Chrome version (156.0.8078.48), milestone (156) or channel (stable, beta, dev, canary)
         required: true
         default: stable
+      revision:
+        description: Build revision, for a new release of the same Dawn (other build options); 1 for none
+        default: '1'
       publish:
         description: Publish a release and open a pull request with the bindings
         type: boolean
@@ -23,6 +27,9 @@ on:
       chrome:
         type: string
         required: true
+      revision:
+        type: string
+        default: '1'
       publish:
         type: boolean
         default: true
@@ -41,6 +48,7 @@ jobs:
     outputs:
       chrome_version: ${{ steps.resolve.outputs.CHROME_VERSION }}
       dawn_commit: ${{ steps.resolve.outputs.DAWN_COMMIT }}
+      release_tag: ${{ steps.tag.outputs.RELEASE_TAG }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -52,6 +60,19 @@ jobs:
         env:
           CHROME: ${{ inputs.chrome }}
         run: tools/dawn_for_chrome.sh --env --platform Linux "$CHROME" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Name the release
+        id: tag
+        env:
+          CHROME_VERSION: ${{ steps.resolve.outputs.CHROME_VERSION }}
+          REVISION: ${{ inputs.revision }}
+        run: |
+          [[ "$REVISION" =~ ^[1-9][0-9]*$ ]] || { echo "::error::revision must be a positive number"; exit 1; }
+          tag="dawn-chrome-$CHROME_VERSION"
+          if [[ "$REVISION" != 1 ]]; then
+            tag="$tag-r$REVISION"
+          fi
+          echo "RELEASE_TAG=$tag" | tee -a "$GITHUB_OUTPUT"
 
   build:
     needs: resolve
@@ -96,7 +117,7 @@ jobs:
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then
             sudo apt-get update
-            sudo apt-get install -y ninja-build g++-14
+            sudo apt-get install -y ninja-build g++-14 libx11-dev libx11-xcb-dev
           else
             command -v ninja || brew install ninja
           fi
@@ -254,7 +275,7 @@ jobs:
     env:
       CHROME_VERSION: ${{ needs.resolve.outputs.chrome_version }}
       DAWN_COMMIT: ${{ needs.resolve.outputs.dawn_commit }}
-      TAG: dawn-chrome-${{ needs.resolve.outputs.chrome_version }}
+      TAG: ${{ needs.resolve.outputs.release_tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
       # With the token persisted, to push the pull request's branch.
@@ -314,7 +335,7 @@ jobs:
           fi
           git status --short
 
-          branch="dawn/chrome-$CHROME_VERSION"
+          branch="dawn/$TAG"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$branch"
