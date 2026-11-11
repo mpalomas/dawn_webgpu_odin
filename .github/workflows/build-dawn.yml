@@ -117,7 +117,11 @@ jobs:
         timeout-minutes: 5
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then
-            tools/ci_apt_install.sh ninja-build g++-14 libx11-dev libx11-xcb-dev
+            # The X11 headers, for DAWN_USE_X11 (Dawn loads libX11-xcb at run time: no libx11-xcb-dev). The runner image
+            # may have a ninja of its own, outside apt.
+            packages=(g++-14 libx11-dev)
+            command -v ninja >/dev/null || packages+=(ninja-build)
+            tools/ci_apt_install.sh "${packages[@]}"
           else
             command -v ninja || brew install ninja
           fi
