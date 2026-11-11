@@ -18,21 +18,23 @@ if [ ${#missing[@]} -eq 0 ]; then
 fi
 echo "Installing: ${missing[*]}"
 
-# GitHub's Ubuntu images read their mirrors from a list (mirror+file:/etc/apt/apt-mirrors.txt) whose first entry is Azure's
-# mirror, and apt tries it again for every file. When its name doesn't resolve, each try waits for the timeout, so we point
-# apt at Ubuntu's own archive instead.
-MIRRORS=/etc/apt/apt-mirrors.txt
-if [ -f "$MIRRORS" ]; then
-	first_host=$(awk 'NF { print $1; exit }' "$MIRRORS" | sed -E 's|^[a-z+]+://||; s|/.*||')
-	if [ -n "$first_host" ] && ! getent hosts "$first_host" >/dev/null; then
-		echo "$first_host doesn't resolve: using archive.ubuntu.com directly"
-		for sources in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
-			if [ -f "$sources" ] && grep -q "mirror+file:$MIRRORS" "$sources"; then
-				sudo sed -i "s|mirror+file:$MIRRORS|http://archive.ubuntu.com/ubuntu/|" "$sources"
-			fi
-		done
+# The runners' DNS sometimes stops resolving Ubuntu's archive hosts while the hosts themselves are up. Then we look each one up
+# with DNS over HTTPS at 1.1.1.1 (an address: no DNS needed to reach it) and pin it in /etc/hosts.
+hosts=$(cat /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null \
+	| grep -oE '(https?://)?[a-z0-9.-]+\.ubuntu\.com' | sed -E 's|^https?://||' | sort -u || true)
+for host in $hosts; do
+	if getent hosts "$host" >/dev/null; then
+		continue
 	fi
-fi
+	address=$(curl -s --max-time 10 -H 'accept: application/dns-json' "https://1.1.1.1/dns-query?name=$host&type=A" \
+		| jq -r '[.Answer[]? | select(.type == 1) | .data] | first // empty' || true)
+	if [ -n "$address" ]; then
+		echo "$host doesn't resolve: pinned to $address (DNS over HTTPS)"
+		echo "$address $host" | sudo tee -a /etc/hosts >/dev/null
+	else
+		echo "$host doesn't resolve, and DNS over HTTPS has no address for it"
+	fi
+done
 
 options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
 sudo apt-get "${options[@]}" update
