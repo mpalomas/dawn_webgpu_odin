@@ -12,11 +12,11 @@ on:
   workflow_dispatch:
     inputs:
       chrome:
-        description: Chrome version (156.0.8078.48), milestone (156) or channel (stable, beta, dev, canary)
+        description: "Chrome version (e.g. 157.0.8103.38: the one in dawn/release.env to rebuild it), milestone (e.g. 157) or channel (stable, beta, dev, canary)"
         required: true
         default: stable
       revision:
-        description: Build revision, for a new release of the same Dawn (other build options); 1 for none
+        description: "Build revision: 1 for a new Chrome version, 2 and up to rebuild one that has a release (other build options)"
         default: '1'
       publish:
         description: Publish a release and open a pull request with the bindings
