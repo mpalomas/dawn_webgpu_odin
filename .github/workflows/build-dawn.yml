@@ -114,10 +114,10 @@ jobs:
 
       - name: Install build tools
         if: steps.cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
+        timeout-minutes: 5
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then
-            sudo apt-get update
-            sudo apt-get install -y ninja-build g++-14 libx11-dev libx11-xcb-dev
+            tools/ci_apt_install.sh ninja-build g++-14 libx11-dev libx11-xcb-dev
           else
             command -v ninja || brew install ninja
           fi
@@ -203,9 +203,8 @@ jobs:
       # takes libstdc++ from the newest GCC installed: g++-14 makes sure it is complete.
       - name: Install GLFW and libstdc++
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libglfw3-dev g++-14
+        timeout-minutes: 5
+        run: tools/ci_apt_install.sh libglfw3-dev g++-14
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:

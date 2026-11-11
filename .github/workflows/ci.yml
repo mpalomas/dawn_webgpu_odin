@@ -128,9 +128,8 @@ jobs:
       # takes libstdc++ from the newest GCC installed: g++-14 makes sure it is complete.
       - name: Install GLFW and libstdc++
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libglfw3-dev g++-14
+        timeout-minutes: 5
+        run: tools/ci_apt_install.sh libglfw3-dev g++-14
 
       - name: Fetch the Dawn libraries
         run: tools/fetch_dawn_libs.sh
