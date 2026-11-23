@@ -71,6 +71,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <math.h>
+#include "dawn/dawn_version.h"
 
 #define _wgpu_COMMA ,
 #if defined(__cplusplus)
@@ -1300,8 +1301,6 @@ static const WGPUTextureUsage WGPUTextureUsage_TransientAttachment = 0x000000000
 static const WGPUTextureUsage WGPUTextureUsage_StorageAttachment = 0x0000000000000040;
 
 typedef void (*WGPUCallback)(void * userdata) WGPU_FUNCTION_ATTRIBUTE;
-typedef size_t (*WGPUDawnLoadCacheDataFunction)(void const * key, size_t keySize, void * value, size_t valueSize, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
-typedef void (*WGPUDawnStoreCacheDataFunction)(void const * key, size_t keySize, void const * value, size_t valueSize, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
 typedef void (*WGPUProc)(void) WGPU_FUNCTION_ATTRIBUTE;
 
 // Callback function pointers
